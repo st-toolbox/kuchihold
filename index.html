@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
+    <title>kuchihold — 口腔運動ミラートレーニング</title>
+    <meta
+      name="description"
+      content="言語聴覚療法（ST）向け 口腔運動トレーニング・ミラーセラピー支援アプリ"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+
+    <!--
+      npm install 不要で動くプロトタイプ構成。
+      React / htm / MediaPipe をブラウザの import map で CDN から直接読み込みます。
+      （ビルドツールが使えない環境でもそのまま実行できます）
+    -->
+    <script type="importmap">
+      {
+        "imports": {
+          "react": "https://esm.sh/react@18.3.1",
+          "react-dom/client": "https://esm.sh/react-dom@18.3.1/client?external=react",
+          "htm": "https://esm.sh/htm@3.1.1",
+          "@mediapipe/tasks-vision": "https://esm.sh/@mediapipe/tasks-vision@0.10.18"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <div id="root">
+      <div class="boot">読み込み中…</div>
+    </div>
+    <noscript>このアプリの利用には JavaScript を有効にしてください。</noscript>
+    <script type="module" src="./src/main.js"></script>
+  </body>
+</html>

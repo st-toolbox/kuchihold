@@ -1,0 +1,354 @@
+:root {
+  --bg: #0f1216;
+  --panel: #181d24;
+  --panel-2: #20262f;
+  --line: #2b333d;
+  --text: #e8edf2;
+  --muted: #93a0ad;
+  --accent: #36c6a0;
+  --accent-2: #4ea1ff;
+  --warn: #f0a945;
+  --danger: #e5604d;
+  --radius: 12px;
+  font-synthesis: none;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, "Hiragino Kaku Gothic ProN",
+    "Noto Sans JP", "Yu Gothic", sans-serif;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
+}
+
+#root {
+  height: 100%;
+}
+
+.boot {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  color: var(--muted);
+}
+
+button {
+  font: inherit;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px 12px;
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+}
+button:hover {
+  border-color: var(--accent);
+}
+button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #06231c;
+  font-weight: 700;
+}
+button.ghost {
+  background: transparent;
+}
+button.active {
+  border-color: var(--accent);
+  background: #14352d;
+}
+button.danger {
+  border-color: #4a2723;
+  color: #ffb4a8;
+}
+
+input,
+select,
+textarea {
+  font: inherit;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 7px 9px;
+}
+
+.app {
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto 1fr;
+}
+
+/* ---- top bar ---- */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+.brand {
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+.brand small {
+  color: var(--muted);
+  font-weight: 500;
+  margin-left: 8px;
+}
+.topbar .spacer {
+  flex: 1;
+}
+.mode-switch {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.mode-switch button {
+  border: none;
+  border-radius: 0;
+}
+
+/* ---- layout ---- */
+.layout {
+  display: grid;
+  grid-template-columns: 280px 1fr 280px;
+  min-height: 0;
+}
+@media (max-width: 1000px) {
+  .layout {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr auto;
+    overflow: auto;
+  }
+}
+
+.side {
+  background: var(--panel);
+  border-right: 1px solid var(--line);
+  padding: 12px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.side.right {
+  border-right: none;
+  border-left: 1px solid var(--line);
+}
+
+.stage {
+  position: relative;
+  display: grid;
+  place-items: center;
+  background: #05080b;
+  min-height: 0;
+  padding: 12px;
+}
+.stage-canvas-wrap {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+}
+canvas.mouth {
+  width: min(100%, calc((100vh - 130px) * 0.75));
+  max-height: 100%;
+  aspect-ratio: 3 / 4;
+  background: #000;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  touch-action: none;
+}
+
+.stage-status {
+  position: absolute;
+  top: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.6);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 13px;
+  color: var(--muted);
+  pointer-events: none;
+}
+.stage-status.warn {
+  color: #ffd9a0;
+  border-color: #5a4524;
+}
+
+/* ---- cards / groups ---- */
+.card {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px;
+}
+.card h3 {
+  margin: 0 0 10px;
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.row.wrap {
+  flex-wrap: wrap;
+}
+.row.between {
+  justify-content: space-between;
+}
+.grid-tools {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.field input[type="range"] {
+  width: 100%;
+}
+.muted {
+  color: var(--muted);
+}
+.small {
+  font-size: 12px;
+}
+
+/* ---- open meter ---- */
+.meter {
+  position: relative;
+  height: 16px;
+  border-radius: 8px;
+  background: #0c1116;
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+.meter > .fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: linear-gradient(90deg, var(--accent-2), var(--accent));
+  width: 0%;
+}
+.meter > .target {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  background: var(--warn);
+}
+.meter-reached {
+  outline: 2px solid var(--accent);
+}
+
+.swatches {
+  display: flex;
+  gap: 6px;
+}
+.swatch {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+}
+.swatch.active {
+  border-color: #fff;
+}
+
+/* ---- patient list ---- */
+.patient {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  cursor: pointer;
+}
+.patient.active {
+  border-color: var(--accent);
+  background: #122821;
+}
+.patient .id {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.patient .meta {
+  color: var(--muted);
+  font-size: 12px;
+}
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.preset {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: space-between;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.badge {
+  display: inline-block;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+.rep-count {
+  font-size: 40px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.hint {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+.error-box {
+  margin: 12px;
+  padding: 12px 14px;
+  border: 1px solid #5a2b24;
+  background: #2a1714;
+  border-radius: 10px;
+  color: #ffc7bd;
+  font-size: 14px;
+  line-height: 1.6;
+}
