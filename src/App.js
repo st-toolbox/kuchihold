@@ -4,7 +4,7 @@ import { MouthEngine, STAMP_TYPES } from "./mouthEngine.js";
 import * as store from "./store.js";
 
 const COLORS = ["#ffd166", "#ef476f", "#06d6a0", "#4ea1ff", "#ffffff"];
-const OPEN_SCALE = 1.0; // 開口度メーターの表示上限
+const OPEN_SCALE = 0.6; // 開口度メーターの表示上限（顔サイズ基準の openness のおおよその最大）
 
 export function App() {
   const canvasRef = useRef(null);
@@ -30,7 +30,7 @@ export function App() {
   const [settings, setSettings] = useState({
     mirror: true,
     level: false,
-    zoom: 2.6,
+    zoom: 1.8, // 顔サイズ基準。大きいほど引き（口元＋周辺が広く映る）
     smoothing: 0.6,
     shadowAlpha: 0.4,
   });
@@ -444,8 +444,8 @@ function ToolPanel(props) {
           </button>
         </div>
         <label className="field" style=${{ marginTop: 10 }}>
-          ズーム（口元の大きさ）
-          <input type="range" min="1.6" max="4" step="0.1" value=${settings.zoom}
+          ズーム（小さいほど寄り／大きいほど引き）
+          <input type="range" min="1" max="3.5" step="0.1" value=${settings.zoom}
             onChange=${(e) => set({ zoom: +e.target.value })} />
         </label>
         <label className="field">

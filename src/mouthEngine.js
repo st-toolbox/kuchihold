@@ -20,7 +20,7 @@ const INTERNAL_H = 960; // 3:4 縦
 const DEFAULTS = {
   mirror: true, // ミラーセラピー：左右反転
   level: false, // 傾き補正（口角を水平に）— 既定オフ
-  zoom: 2.6, // クロップ幅 = 口幅 × zoom（大きいほど引き）
+  zoom: 1.8, // クロップ幅 = 顔サイズ × zoom（大きいほど引き）
   smoothing: 0.6, // 固定の安定度。大きいほど静止時のジッターを抑える（動きの遅れは出にくい）
   shadowAlpha: 0.4,
 };
@@ -258,20 +258,21 @@ export class MouthEngine {
   _updateTransform(mouth, v, t) {
     const cx = mouth.centerX * v.videoWidth;
     const cy = mouth.centerY * v.videoHeight;
-    const w = mouth.width * v.videoWidth;
+    // 拡大率の基準は「顔サイズ（目の間隔）」。口の開閉では変わらないので
+    // 「い」「う」でズームが暴れない。
+    const face = mouth.faceSize * v.videoWidth;
     const angle = mouth.angle;
 
     if (!this._filters) {
-      // 口幅を基準スケールにして、画素サイズに依存しないフィルタ挙動にする
-      const ref = Math.max(1, w);
+      const ref = Math.max(1, face);
       this._filters = {
         ref,
         cx: new OneEuroFilter(),
         cy: new OneEuroFilter(),
-        w: new OneEuroFilter(),
+        face: new OneEuroFilter(),
         angle: new OneEuroFilter(),
       };
-      this.sm = { cx, cy, w, angle };
+      this.sm = { cx, cy, face, angle };
     }
 
     // smoothing(0..1) を One Euro の minCutoff にマッピング。
@@ -280,16 +281,16 @@ export class MouthEngine {
     const s = clamp(this.settings.smoothing, 0, 1);
     const minCutoff = 2.6 - 2.2 * s; // 0.4 .. 2.6 (Hz)
     const beta = 0.9;
-    // 位置・大きさは口幅でスケール正規化してフィルタに通す
     const ref = this._filters.ref;
     this._filters.cx.setParams(minCutoff, beta);
     this._filters.cy.setParams(minCutoff, beta);
-    this._filters.w.setParams(minCutoff, beta);
+    // 顔サイズは特に安定させたい（ズームの揺れを防ぐ）ので追従を弱めにする
+    this._filters.face.setParams(Math.min(minCutoff, 1.0), 0.2);
     this._filters.angle.setParams(minCutoff, beta * 0.5);
 
     this.sm.cx = this._filters.cx.filter(cx / ref, t) * ref;
     this.sm.cy = this._filters.cy.filter(cy / ref, t) * ref;
-    this.sm.w = this._filters.w.filter(w / ref, t) * ref;
+    this.sm.face = this._filters.face.filter(face / ref, t) * ref;
     this.sm.angle = this._filters.angle.filter(angle, t);
   }
 
@@ -317,7 +318,8 @@ export class MouthEngine {
   _drawVideoCrop(ctx) {
     const { mirror, level, zoom } = this.settings;
     const sm = this.sm;
-    const cropW = clamp(sm.w * zoom, 40, 100000);
+    // クロップ幅 = 顔サイズ × zoom（口の動きに依存しない安定したズーム）
+    const cropW = clamp(sm.face * zoom, 40, 100000);
     const scale = INTERNAL_W / cropW;
 
     ctx.save();

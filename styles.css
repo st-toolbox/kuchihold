@@ -131,10 +131,42 @@ textarea {
   min-height: 0;
 }
 @media (max-width: 1000px) {
+  /* モバイル：縦に積んで全体をスクロール。操作パネルに必ず手が届くようにする。
+     並び順は 練習画面 → 操作パネル → 患者パネル。 */
+  html,
+  body,
+  #root {
+    height: auto;
+    min-height: 100%;
+  }
+  .app {
+    height: auto;
+    min-height: 100%;
+  }
   .layout {
-    grid-template-columns: 1fr;
-    grid-template-rows: auto 1fr auto;
-    overflow: auto;
+    display: flex;
+    flex-direction: column;
+  }
+  .stage {
+    order: 1;
+    height: auto;
+    padding: 10px;
+  }
+  .side.right {
+    order: 2;
+  }
+  .side:not(.right) {
+    order: 3;
+  }
+  .side {
+    overflow: visible;
+    border: none;
+    border-top: 1px solid var(--line);
+  }
+  canvas.mouth {
+    width: auto;
+    height: 60vh;
+    max-width: 100%;
   }
 }
 
