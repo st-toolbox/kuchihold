@@ -19,17 +19,27 @@ export const LIP = {
 
 let landmarkerPromise = null;
 
+async function build(fileset, delegate) {
+  return FaceLandmarker.createFromOptions(fileset, {
+    baseOptions: { modelAssetPath: MODEL_URL, delegate },
+    runningMode: "VIDEO",
+    numFaces: 1,
+    outputFaceBlendshapes: false,
+    outputFacialTransformationMatrixes: false,
+  });
+}
+
 export function createFaceLandmarker() {
   if (!landmarkerPromise) {
     landmarkerPromise = (async () => {
       const fileset = await FilesetResolver.forVisionTasks(WASM_BASE);
-      return FaceLandmarker.createFromOptions(fileset, {
-        baseOptions: { modelAssetPath: MODEL_URL, delegate: "GPU" },
-        runningMode: "VIDEO",
-        numFaces: 1,
-        outputFaceBlendshapes: false,
-        outputFacialTransformationMatrixes: false,
-      });
+      try {
+        // まず GPU。モバイル Safari 等で GPU デリゲートが使えない場合は CPU にフォールバック。
+        return await build(fileset, "GPU");
+      } catch (e) {
+        console.warn("GPU デリゲートに失敗、CPU で再試行します", e);
+        return await build(fileset, "CPU");
+      }
     })().catch((err) => {
       // 失敗時は次回再試行できるようキャッシュを破棄
       landmarkerPromise = null;

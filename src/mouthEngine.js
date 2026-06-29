@@ -21,7 +21,7 @@ const DEFAULTS = {
   mirror: true, // ミラーセラピー：左右反転
   level: false, // 傾き補正（口角を水平に）— 既定オフ
   zoom: 2.6, // クロップ幅 = 口幅 × zoom（大きいほど引き）
-  smoothing: 0.78, // 位置・大きさの平滑化（0..0.95、大きいほど安定）
+  smoothing: 0.6, // 固定の安定度。大きいほど静止時のジッターを抑える（動きの遅れは出にくい）
   shadowAlpha: 0.4,
 };
 
@@ -49,6 +49,7 @@ export class MouthEngine {
 
     // 平滑化された顔ロック変換（source px / rad）
     this.sm = null; // {cx, cy, w, angle}
+    this._filters = null; // One Euro Filter（cx,cy,w,angle）
     this.lastFaceAt = 0;
 
     // オーバーレイ（INTERNAL_W×INTERNAL_H 座標系で保存）
@@ -85,6 +86,8 @@ export class MouthEngine {
 
   async start() {
     if (this.running) return;
+    this.sm = null;
+    this._filters = null;
     try {
       this.stream = await navigator.mediaDevices.getUserMedia({
         video: {
@@ -222,7 +225,7 @@ export class MouthEngine {
     if (mouth) {
       hasFace = true;
       this.lastFaceAt = t;
-      this._updateTransform(mouth, v);
+      this._updateTransform(mouth, v, t);
       this._updateOpenness(mouth.openness);
     }
 
@@ -252,25 +255,42 @@ export class MouthEngine {
     }
   };
 
-  _updateTransform(mouth, v) {
+  _updateTransform(mouth, v, t) {
     const cx = mouth.centerX * v.videoWidth;
     const cy = mouth.centerY * v.videoHeight;
     const w = mouth.width * v.videoWidth;
     const angle = mouth.angle;
-    if (!this.sm) {
+
+    if (!this._filters) {
+      // 口幅を基準スケールにして、画素サイズに依存しないフィルタ挙動にする
+      const ref = Math.max(1, w);
+      this._filters = {
+        ref,
+        cx: new OneEuroFilter(),
+        cy: new OneEuroFilter(),
+        w: new OneEuroFilter(),
+        angle: new OneEuroFilter(),
+      };
       this.sm = { cx, cy, w, angle };
-      return;
     }
-    const a = clamp(this.settings.smoothing, 0, 0.95);
-    const k = 1 - a;
-    this.sm.cx += (cx - this.sm.cx) * k;
-    this.sm.cy += (cy - this.sm.cy) * k;
-    this.sm.w += (w - this.sm.w) * k;
-    // 角度は連続性のため差分を正規化
-    let d = angle - this.sm.angle;
-    while (d > Math.PI) d -= 2 * Math.PI;
-    while (d < -Math.PI) d += 2 * Math.PI;
-    this.sm.angle += d * k;
+
+    // smoothing(0..1) を One Euro の minCutoff にマッピング。
+    // 大きいほど minCutoff 小＝静止時の微振動を強く除去。
+    // beta を高めに固定することで、動いている間は遅れずに即ロック（＝口元が固定）。
+    const s = clamp(this.settings.smoothing, 0, 1);
+    const minCutoff = 2.6 - 2.2 * s; // 0.4 .. 2.6 (Hz)
+    const beta = 0.9;
+    // 位置・大きさは口幅でスケール正規化してフィルタに通す
+    const ref = this._filters.ref;
+    this._filters.cx.setParams(minCutoff, beta);
+    this._filters.cy.setParams(minCutoff, beta);
+    this._filters.w.setParams(minCutoff, beta);
+    this._filters.angle.setParams(minCutoff, beta * 0.5);
+
+    this.sm.cx = this._filters.cx.filter(cx / ref, t) * ref;
+    this.sm.cy = this._filters.cy.filter(cy / ref, t) * ref;
+    this.sm.w = this._filters.w.filter(w / ref, t) * ref;
+    this.sm.angle = this._filters.angle.filter(angle, t);
   }
 
   _updateOpenness(openness) {
@@ -454,6 +474,61 @@ function drawStamp(ctx, s) {
       break;
   }
   ctx.restore();
+}
+
+// ---- One Euro Filter -------------------------------------------------------
+// 「動いている時は遅れずに追従（=口元が固定される）、静止時はジッターを除去」する
+// 適応的ローパスフィルタ。EMA の固定平滑化と違い、動きの遅れと微振動を両立して抑える。
+// 参考: Casiez et al. "1€ Filter" (2012)
+
+class LowPassFilter {
+  constructor() {
+    this.initialized = false;
+    this.y = 0;
+  }
+  filter(x, alpha) {
+    if (!this.initialized) {
+      this.y = x;
+      this.initialized = true;
+    } else {
+      this.y = alpha * x + (1 - alpha) * this.y;
+    }
+    return this.y;
+  }
+}
+
+class OneEuroFilter {
+  constructor(minCutoff = 1.4, beta = 0.9, dCutoff = 1.0) {
+    this.minCutoff = minCutoff;
+    this.beta = beta;
+    this.dCutoff = dCutoff;
+    this.x = new LowPassFilter();
+    this.dx = new LowPassFilter();
+    this.lastTime = null;
+    this.lastRaw = 0;
+  }
+  setParams(minCutoff, beta) {
+    this.minCutoff = minCutoff;
+    this.beta = beta;
+  }
+  _alpha(cutoff, dt) {
+    const tau = 1 / (2 * Math.PI * cutoff);
+    return 1 / (1 + tau / dt);
+  }
+  filter(x, t) {
+    let dt;
+    if (this.lastTime == null) dt = 1 / 60;
+    else {
+      dt = (t - this.lastTime) / 1000;
+      if (!(dt > 0)) dt = 1 / 60;
+    }
+    this.lastTime = t;
+    const dxRaw = this.x.initialized ? (x - this.lastRaw) / dt : 0;
+    this.lastRaw = x;
+    const edx = this.dx.filter(dxRaw, this._alpha(this.dCutoff, dt));
+    const cutoff = this.minCutoff + this.beta * Math.abs(edx);
+    return this.x.filter(x, this._alpha(cutoff, dt));
+  }
 }
 
 // ---- ユーティリティ --------------------------------------------------------

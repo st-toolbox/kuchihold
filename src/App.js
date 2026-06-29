@@ -31,7 +31,7 @@ export function App() {
     mirror: true,
     level: false,
     zoom: 2.6,
-    smoothing: 0.78,
+    smoothing: 0.6,
     shadowAlpha: 0.4,
   });
   const [hasShadow, setHasShadow] = useState(false);
@@ -449,10 +449,14 @@ function ToolPanel(props) {
             onChange=${(e) => set({ zoom: +e.target.value })} />
         </label>
         <label className="field">
-          ブレ抑制の強さ ${Math.round(settings.smoothing * 100)}
-          <input type="range" min="40" max="92" value=${Math.round(settings.smoothing * 100)}
+          口元の固定の強さ ${Math.round(settings.smoothing * 100)}
+          <input type="range" min="20" max="95" value=${Math.round(settings.smoothing * 100)}
             onChange=${(e) => set({ smoothing: +e.target.value / 100 })} />
         </label>
+        <p className="hint">
+          口元が画面の中央に固定され、手ブレや顔の移動があっても止まって見えます。
+          細かく震える場合は数値を上げ、追従が遅いと感じる場合は下げてください。
+        </p>
       </div>
 
       <div className="card">
