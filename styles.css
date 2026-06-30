@@ -110,6 +110,12 @@ textarea {
   font-weight: 500;
   margin-left: 8px;
 }
+.brand .ver {
+  color: var(--accent);
+  font-weight: 700;
+  font-size: 12px;
+  margin-left: 6px;
+}
 .topbar .spacer {
   flex: 1;
 }

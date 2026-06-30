@@ -7,6 +7,7 @@ const COLORS = ["#ffd166", "#ef476f", "#06d6a0", "#4ea1ff", "#ffffff"];
 const OPEN_SCALE = 0.6; // 縦（あ）メーターの表示上限
 const SPREAD_SCALE = 0.8; // 横（い）メーターの表示上限
 const reachedStyle = { color: "#06231c", background: "#36c6a0", borderColor: "#36c6a0" };
+const APP_VERSION = "v12"; // 画面右上に表示。キャッシュ確認用。
 
 // 相対値 → 概算mm（推定）。mmPerRel が未確定なら「—」。
 function mmText(rel, mmPerRel) {
@@ -252,7 +253,7 @@ export function App() {
   return html`
     <div className="app">
       <div className="topbar">
-        <div className="brand">kuchihold <small>口腔運動ミラートレーニング</small></div>
+        <div className="brand">kuchihold <small>口腔運動ミラートレーニング</small> <span className="ver">${APP_VERSION}</span></div>
         <div className="spacer"></div>
         <div className="mode-switch">
           <button
