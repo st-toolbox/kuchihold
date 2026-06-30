@@ -280,7 +280,6 @@ export function App() {
       ${isMobile
         ? html`
             <div className="layout mobile">
-              ${stage}
               <div className="tabbar">
                 ${tabs.map(
                   (tb) => html`<button key=${tb.id}
@@ -288,6 +287,7 @@ export function App() {
                     onClick=${() => setTab(tb.id)}>${tb.label}</button>`
                 )}
               </div>
+              ${stage}
               <div className="mobile-panel">${renderSection(effTab)}</div>
             </div>
           `

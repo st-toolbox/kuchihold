@@ -131,17 +131,19 @@ textarea {
   min-height: 0;
 }
 @media (max-width: 1000px) {
-  /* モバイル：動画を上に固定し、下のタブで操作パネルを切替（スクロールを最小化）。
-     スマホのアドレスバーを考慮して dvh（動的ビューポート）で高さを確定し、
-     動画＋タブ＋パネルが必ず画面内に収まるようにする。 */
+  /* モバイル：高さ(vh/dvh)に依存しない作り。
+     動画は画面幅基準で小さめ固定。タブは上部にスティッキー固定して常に見える。
+     ページは普通に縦スクロール。 */
   html,
   body,
   #root {
-    height: 100%;
+    height: auto;
+    min-height: 100%;
   }
   .app {
-    height: 100svh; /* 小さい方のビューポート＝常に見える範囲に収める */
-    height: 100dvh;
+    height: auto;
+    min-height: 100%;
+    display: block;
   }
   .topbar {
     padding: 8px 12px;
@@ -156,21 +158,22 @@ textarea {
     padding: 6px 12px;
   }
   .layout.mobile {
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
+    display: block;
   }
   .stage {
-    flex: 0 0 auto;
-    height: 38dvh;
-    padding: 6px;
+    padding: 8px;
   }
   canvas.mouth {
-    width: auto;
-    height: 100%;
-    max-width: 100%;
+    width: 58vw;
+    max-width: 300px;
+    height: auto;
+    max-height: none;
   }
+  /* タブを画面上部にスティッキー固定（スクロールしても常に表示） */
   .tabbar {
+    position: sticky;
+    top: 0;
+    z-index: 30;
     display: flex;
     gap: 6px;
     overflow-x: auto;
@@ -178,23 +181,18 @@ textarea {
     background: var(--panel);
     border-top: 1px solid var(--line);
     border-bottom: 1px solid var(--line);
-    flex: 0 0 auto;
   }
   .tabbar button {
     white-space: nowrap;
-    padding: 8px 14px;
+    padding: 9px 16px;
   }
   .tabbar button.active {
     border-color: var(--accent);
     background: #14352d;
   }
   .mobile-panel {
-    flex: 1 1 auto;
-    min-height: 0;
-    overflow-y: auto;
     padding: 10px;
-    padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
-    -webkit-overflow-scrolling: touch;
+    padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
   }
   .mobile-panel .side {
     border: none;
