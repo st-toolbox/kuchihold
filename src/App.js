@@ -7,7 +7,7 @@ import * as tongue from "./tongueClassifier.js?v=11";
 const OPEN_SCALE = 0.6; // 縦（あ）メーターの表示上限
 const SPREAD_SCALE = 0.8; // 横（い）メーターの表示上限
 const reachedStyle = { color: "#06231c", background: "#36c6a0", borderColor: "#36c6a0" };
-const APP_VERSION = "v18";
+const APP_VERSION = "v19";
 
 const TONGUE_CLASSES = [
   { id: "neutral", label: "中立" },
@@ -104,6 +104,8 @@ export function App() {
   const [tongueCounts, setTongueCounts] = useState({});
   const [tongueReps, setTongueReps] = useState(0);
   const tongueArmRef = useRef(true);
+  const tongueHistRef = useRef([]); // 直近の判定（多数決で安定化）
+  const lastCountRef = useRef(0); // 連続カウント防止
 
   // ---- 起動 ----------------------------------------------------------------
   useEffect(() => {
@@ -257,14 +259,30 @@ export function App() {
         try {
           const res = await tongue.classifyTongue(crop);
           if (alive && res) {
-            setTongueLabel(res.label);
-            // 訓練中の反復カウント：目標状態に到達→中立へ戻る→到達 で +1
+            // 直近4フレームの多数決で判定を安定化（フリッカ低減）
+            const hist = tongueHistRef.current;
+            hist.push(res.label);
+            if (hist.length > 4) hist.shift();
+            const counts = {};
+            let lab = res.label;
+            let best = 0;
+            for (const l of hist) {
+              counts[l] = (counts[l] || 0) + 1;
+              if (counts[l] > best) {
+                best = counts[l];
+                lab = l;
+              }
+            }
+            setTongueLabel(lab);
+            // 訓練中の反復カウント：目標に到達 → 目標から外れる(=エンドポイント) → 再到達 で +1
             if (mode === "train" && tongueTarget) {
-              if (res.label === tongueTarget && tongueArmRef.current) {
+              const now = performance.now();
+              if (lab === tongueTarget && tongueArmRef.current && now - lastCountRef.current > 600) {
                 tongueArmRef.current = false;
+                lastCountRef.current = now;
                 setTongueReps((n) => n + 1);
-              } else if (res.label === "neutral") {
-                tongueArmRef.current = true;
+              } else if (lab !== tongueTarget) {
+                tongueArmRef.current = true; // 目標から離れたら再アーム
               }
             }
           }
@@ -310,6 +328,8 @@ export function App() {
     eng().resetReps();
     setTongueReps(0);
     tongueArmRef.current = true;
+    tongueHistRef.current = [];
+    lastCountRef.current = 0;
     sessionStartRef.current = performance.now();
     setSessionActive(true);
     setMetrics({ ...metricsRef.current, reps: 0 });
@@ -680,13 +700,14 @@ function RhythmCard({ bpm, setBpm, rhythmOn, setRhythmOn }) {
   `;
 }
 
-// ---- 舌（見本登録方式）----------------------------------------------------
+// ---- 舌の目標（実演＝撮影で設定）------------------------------------------
+const TONGUE_POINT_COLOR = { left: "#4ea1ff", right: "#4ea1ff", up: "#ff5b6e", down: "#ff5b6e" };
+
 function TongueCard(props) {
   const {
     tongueLoaded, tongueLoading, ensureTongue, addTongueSample, resetTongue,
     tongueCounts, tongueLabel, tongueTarget, setTongueTarget,
   } = props;
-  const [sel, setSel] = useState("out");
 
   useEffect(() => {
     ensureTongue();
@@ -696,7 +717,7 @@ function TongueCard(props) {
     return html`
       <div className="side">
         <div className="card">
-          <h3>舌の運動（見本登録方式）</h3>
+          <h3>舌の目標（実演で設定）</h3>
           <p className="hint">
             AIモデルを読み込んでいます…（初回のみ少し時間がかかります）。端末内で動作し、映像は送信されません。
           </p>
@@ -706,44 +727,50 @@ function TongueCard(props) {
     `;
   }
 
-  const totalForSel = tongueCounts[sel] || 0;
+  // 実演を撮影：その方向の見本を登録し、その点を目標に設定する
+  const capture = (id) => {
+    addTongueSample(id);
+    if (id !== "neutral") setTongueTarget(id);
+  };
+  const pointBtn = (id) => {
+    const c = TONGUE_CLASSES.find((x) => x.id === id);
+    const n = tongueCounts[id] || 0;
+    return html`<button key=${id}
+      className=${tongueTarget === id ? "active" : ""}
+      style=${{ borderColor: TONGUE_POINT_COLOR[id] }}
+      onClick=${() => capture(id)}>
+      <b style=${{ color: TONGUE_POINT_COLOR[id] }}>${c.label}</b>を撮影<br />
+      <span className="muted small">登録 ${n}</span>
+    </button>`;
+  };
+
   return html`
     <div className="side">
       <div className="card">
-        <h3>① 舌の見本を登録</h3>
-        <p className="hint">
-          画面の目標点（<b style=${{ color: "#ffe14d" }}>黄＝左右の口角</b>／<b style=${{ color: "#ff5b6e" }}>赤＝上(上唇)・下(下唇)</b>）に
-          舌先を当てた状態で「登録」を数回（5回以上目安）。<b>中立</b>も必ず登録してください。
-        </p>
-        <div className="grid-tools" style=${{ gridTemplateColumns: "repeat(3,1fr)" }}>
-          ${TONGUE_CLASSES.map(
-            (c) => html`<button key=${c.id} className=${sel === c.id ? "active" : ""}
-              onClick=${() => setSel(c.id)}>
-              ${c.label}<br /><span className="muted small">${tongueCounts[c.id] || 0}</span>
-            </button>`
-          )}
-        </div>
-        <button className="primary" style=${{ width: "100%", marginTop: 10 }}
-          onClick=${() => addTongueSample(sel)}>
-          「${tongueLabelOf(sel)}」を登録（現在 ${totalForSel}）
+        <h3>① 中立を撮影</h3>
+        <p className="hint">舌を出していない<b>安静（中立）</b>の状態で数回撮影してください（戻り判定に使います）。</p>
+        <button className="primary" style=${{ width: "100%" }} onClick=${() => capture("neutral")}>
+          中立を撮影（登録 ${tongueCounts.neutral || 0}）
         </button>
-        <div className="row between small" style=${{ marginTop: 8 }}>
-          <span className="muted">今の判定：<b>${tongueLabel ? tongueLabelOf(tongueLabel) : "—"}</b></span>
-          <button className="ghost small danger" onClick=${resetTongue}>全消去</button>
-        </div>
       </div>
 
       <div className="card">
-        <h3>② 目標の状態</h3>
-        <p className="hint">訓練で数えたい舌の状態を選びます。到達→中立→到達 で1回。</p>
-        <div className="grid-tools" style=${{ gridTemplateColumns: "repeat(3,1fr)" }}>
-          ${TONGUE_CLASSES.filter((c) => c.id !== "neutral").map(
-            (c) => html`<button key=${c.id} className=${tongueTarget === c.id ? "active" : ""}
-              onClick=${() => setTongueTarget(tongueTarget === c.id ? null : c.id)}>${c.label}</button>`
-          )}
+        <h3>② 目標を実演して撮影</h3>
+        <p className="hint">
+          舌先を <b style=${{ color: "#4ea1ff" }}>水色＝左右の口角</b> ／
+          <b style=${{ color: "#ff5b6e" }}>赤＝上(上唇)・下(下唇)</b> の点に当てた状態で
+          「撮影」。撮影した点が<b>目標</b>になります（各3〜5回で精度↑）。
+        </p>
+        <div className="grid-tools">
+          ${pointBtn("left")} ${pointBtn("right")} ${pointBtn("up")} ${pointBtn("down")}
         </div>
-        <div className="muted small" style=${{ marginTop: 8 }}>
-          現在の目標：${tongueTarget ? tongueLabelOf(tongueTarget) : "なし（口唇の目標を使用）"}
+        <div className="row between small" style=${{ marginTop: 10 }}>
+          <span className="muted">今の判定：<b>${tongueLabel ? tongueLabelOf(tongueLabel) : "—"}</b></span>
+          <span>目標：<b>${tongueTarget ? tongueLabelOf(tongueTarget) : "なし"}</b></span>
+        </div>
+        <div className="row wrap" style=${{ marginTop: 8 }}>
+          <button className="ghost small" onClick=${() => setTongueTarget(null)} disabled=${tongueTarget == null}>目標を解除</button>
+          <button className="ghost small danger" onClick=${resetTongue}>見本を全消去</button>
         </div>
       </div>
     </div>

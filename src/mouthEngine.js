@@ -547,9 +547,10 @@ export class MouthEngine {
 
     const T = L.targets;
     if (T) {
-      // 左右の口角（黄）
-      this._drawTargetPoint(ctx, T.left, "#ffe14d", this._tongueTarget === "left");
-      this._drawTargetPoint(ctx, T.right, "#ffe14d", this._tongueTarget === "right");
+      // 左右の口角：舌リハ＝水色、口唇リハ＝黄
+      const lr = this._showTonguePoints ? "#4ea1ff" : "#ffe14d";
+      this._drawTargetPoint(ctx, T.left, lr, this._tongueTarget === "left");
+      this._drawTargetPoint(ctx, T.right, lr, this._tongueTarget === "right");
       // 舌リハ時のみ：上唇中央／下唇の少し下（赤）
       if (this._showTonguePoints) {
         this._drawTargetPoint(ctx, T.up, "#ff5b6e", this._tongueTarget === "up");
