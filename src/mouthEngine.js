@@ -102,6 +102,10 @@ export class MouthEngine {
     this._calib = null; // {step, deltas}
     this.tapMarks = []; // タップ位置の一時表示（点線の丸）
 
+    // 舌の到達目標点（描画用）
+    this._showTonguePoints = false;
+    this._tongueTarget = null; // 'left'|'right'|'up'|'down'|null
+
     // コールバック
     this.onMetrics = null; // ({openness, spread, reachedOpen, reachedSpread, reached, reps, shadowMatch, hasFace})
     this.onRep = null; // (reps)
@@ -176,6 +180,12 @@ export class MouthEngine {
   }
   setSpreadTarget(v) {
     this.spreadTarget = v;
+  }
+  setShowTonguePoints(v) {
+    this._showTonguePoints = !!v;
+  }
+  setTongueTargetPoint(id) {
+    this._tongueTarget = id;
   }
 
   // ---- オーバーレイ操作 ----------------------------------------------------
@@ -523,7 +533,7 @@ export class MouthEngine {
     ];
   }
 
-  // 口角の点と上下唇のアウトラインを描画
+  // 口唇の輪郭と、舌の到達目標点（黄＝口角、赤＝上下唇）を描画
   _drawLandmarks(ctx) {
     const L = this.lips;
     if (!L) return;
@@ -534,13 +544,37 @@ export class MouthEngine {
     ctx.strokeStyle = "rgba(80, 230, 255, 0.95)"; // 細い水色の輪郭線
     this._strokeLoop(ctx, L.outer);
     this._strokeLoop(ctx, L.inner);
-    // 左右の口角に小さな黄色点
-    ctx.fillStyle = "#ffe14d";
-    for (const c of [L.cornerL, L.cornerR]) {
-      const [x, y] = this._project(c.x, c.y);
+
+    const T = L.targets;
+    if (T) {
+      // 左右の口角（黄）
+      this._drawTargetPoint(ctx, T.left, "#ffe14d", this._tongueTarget === "left");
+      this._drawTargetPoint(ctx, T.right, "#ffe14d", this._tongueTarget === "right");
+      // 舌リハ時のみ：上唇中央／下唇の少し下（赤）
+      if (this._showTonguePoints) {
+        this._drawTargetPoint(ctx, T.up, "#ff5b6e", this._tongueTarget === "up");
+        this._drawTargetPoint(ctx, T.down, "#ff5b6e", this._tongueTarget === "down");
+      }
+    }
+    ctx.restore();
+  }
+
+  _drawTargetPoint(ctx, p, color, active) {
+    const [x, y] = this._project(p.x, p.y);
+    ctx.save();
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(x, y, active ? 9 : 6, 0, Math.PI * 2);
+    ctx.fill();
+    if (active) {
+      // 目標として強調（脈動するリング）
+      const t = (performance.now() % 900) / 900;
+      ctx.globalAlpha = 1 - t;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 3;
       ctx.beginPath();
-      ctx.arc(x, y, 6, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.arc(x, y, 12 + t * 16, 0, Math.PI * 2);
+      ctx.stroke();
     }
     ctx.restore();
   }

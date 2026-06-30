@@ -138,12 +138,28 @@ export function detectMouth(landmarker, video, tMs) {
     (EYE_WIDTH_MM / eyeWidth + INNER_CANTHAL_MM / innerCanthal) / 2;
   const mmPerRel = faceSize * px2mm;
 
+  // 舌の到達目標点（左右口角＝黄、上唇中央／下唇の少し下＝赤）
+  const upTop = lm[0] || ti; // 上唇の山
+  const upIn = lm[13] || ti; // 上唇内側
+  const loOut = lm[17] || bi; // 下唇の底
+  const up = { x: (upTop.x + upIn.x) / 2, y: (upTop.y + upIn.y) / 2 };
+  const down = {
+    x: loOut.x + (loOut.x - centerX) * 0.6,
+    y: loOut.y + (loOut.y - centerY) * 0.6,
+  };
+
   // 唇の輪郭と口角（描画用、すべて正規化座標）
   const lips = {
     outer: loop(lm, LIP_OUTER),
     inner: loop(lm, LIP_INNER),
     cornerL: { x: cl.x, y: cl.y },
     cornerR: { x: cr.x, y: cr.y },
+    targets: {
+      left: { x: cl.x, y: cl.y },
+      right: { x: cr.x, y: cr.y },
+      up,
+      down,
+    },
   };
 
   return { centerX, centerY, faceSize, angle, openness, spread, mmPerRel, lips };

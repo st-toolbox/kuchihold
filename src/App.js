@@ -7,16 +7,16 @@ import * as tongue from "./tongueClassifier.js?v=11";
 const OPEN_SCALE = 0.6; // 縦（あ）メーターの表示上限
 const SPREAD_SCALE = 0.8; // 横（い）メーターの表示上限
 const reachedStyle = { color: "#06231c", background: "#36c6a0", borderColor: "#36c6a0" };
-const APP_VERSION = "v17";
+const APP_VERSION = "v18";
 
 const TONGUE_CLASSES = [
   { id: "neutral", label: "中立" },
-  { id: "out", label: "出す" },
   { id: "left", label: "左" },
   { id: "right", label: "右" },
   { id: "up", label: "上" },
   { id: "down", label: "下" },
 ];
+const TONGUE_POINTS = ["left", "right", "up", "down"]; // 目標にできる点
 const tongueLabelOf = (id) => (TONGUE_CLASSES.find((c) => c.id === id) || {}).label || id;
 
 const DEFAULT_SETTINGS = {
@@ -29,11 +29,17 @@ const DEFAULT_SETTINGS = {
   lmOffY: 0,
 };
 
-const SETUP_TABS = [
+const LIPS_TABS = [
   { id: "setup", label: "初期設定" },
   { id: "patient", label: "患者" },
   { id: "target", label: "目標" },
-  { id: "tongue", label: "舌" },
+  { id: "rhythm", label: "リズム" },
+  { id: "view", label: "詳細" },
+];
+const TONGUE_TABS = [
+  { id: "setup", label: "初期設定" },
+  { id: "patient", label: "患者" },
+  { id: "tongue", label: "舌の目標" },
   { id: "rhythm", label: "リズム" },
   { id: "view", label: "詳細" },
 ];
@@ -73,6 +79,7 @@ export function App() {
 
   const [ready, setReady] = useState(false);
   const [error, setError] = useState(null);
+  const [rehab, setRehab] = useState("lips"); // lips | tongue（リハ種別の根本切替）
   const [mode, setMode] = useState("setup"); // setup | train
   const [tab, setTab] = useState("setup");
   const [metrics, setMetrics] = useState(metricsRef.current);
@@ -139,6 +146,14 @@ export function App() {
     e.setOpenTarget(openTarget);
     e.setSpreadTarget(spreadTarget);
   }, [openTarget, spreadTarget]);
+
+  // 舌リハ：上下の赤点を表示し、目標点を強調
+  useEffect(() => {
+    const e = engineRef.current;
+    if (!e) return;
+    e.setShowTonguePoints(rehab === "tongue");
+    e.setTongueTargetPoint(rehab === "tongue" ? tongueTarget : null);
+  }, [rehab, tongueTarget]);
 
   // モバイルで実際に見える高さを反映（無スクロール化）
   useEffect(() => {
@@ -228,10 +243,12 @@ export function App() {
     setTongueLabel(null);
   }, []);
 
-  // 判定ループ：舌タブ表示中、または訓練中に舌目標があるとき
+  // 判定ループ：舌リハで、舌タブ表示中 または 訓練中に舌目標があるとき
   useEffect(() => {
     const active =
-      tongueLoaded && ((mode === "setup" && tab === "tongue") || (mode === "train" && tongueTarget));
+      tongueLoaded &&
+      rehab === "tongue" &&
+      ((mode === "setup" && tab === "tongue") || (mode === "train" && tongueTarget));
     if (!active) return;
     let alive = true;
     const tick = async () => {
@@ -262,12 +279,12 @@ export function App() {
       alive = false;
       clearTimeout(id);
     };
-  }, [tongueLoaded, mode, tab, tongueTarget]);
+  }, [tongueLoaded, rehab, mode, tab, tongueTarget]);
 
-  // 舌目標が設定されたらモデルを用意（設定・訓練どちらでも）
+  // 舌リハに入ったらモデルを用意
   useEffect(() => {
-    if (tongueTarget && !tongueLoaded) ensureTongue();
-  }, [tongueTarget, tongueLoaded, ensureTongue]);
+    if (rehab === "tongue" && !tongueLoaded) ensureTongue();
+  }, [rehab, tongueLoaded, ensureTongue]);
 
   // ---- 操作ハンドラ --------------------------------------------------------
   const eng = () => engineRef.current;
@@ -304,6 +321,7 @@ export function App() {
 
   // ---- スロット（設定の保存／読み込み）-------------------------------------
   const currentConfig = () => ({
+    rehab,
     openTarget,
     spreadTarget,
     bpm,
@@ -312,6 +330,7 @@ export function App() {
   });
   const applyConfig = (cfg) => {
     if (!cfg) return;
+    if (cfg.rehab) setRehab(cfg.rehab);
     setOpenTarget(cfg.openTarget ?? null);
     setSpreadTarget(cfg.spreadTarget ?? null);
     setBpm(cfg.bpm ?? 60);
@@ -320,6 +339,7 @@ export function App() {
   };
 
   const activeReached = openTarget != null || spreadTarget != null ? metrics.reached : false;
+  const tongueMode = rehab === "tongue" && tongueTarget != null;
 
   // ---- パネル分配 ----------------------------------------------------------
   const common = {
@@ -329,11 +349,11 @@ export function App() {
     bpm, setBpm, rhythmOn, setRhythmOn,
     calib, startCalib,
     slots, currentConfig, applyConfig,
-    setError,
+    setError, rehab,
     tongueLoaded, tongueLoading, ensureTongue, addTongueSample, resetTongue,
     tongueCounts, tongueLabel, tongueTarget, setTongueTarget,
   };
-  const tabs = SETUP_TABS;
+  const tabs = rehab === "tongue" ? TONGUE_TABS : LIPS_TABS;
   const effTab = tabs.some((t) => t.id === tab) ? tab : tabs[0].id;
   const renderSection = (id) => {
     switch (id) {
@@ -352,6 +372,10 @@ export function App() {
       <div className="topbar">
         <div className="brand">kuchihold <span className="ver">${APP_VERSION}</span></div>
         <div className="spacer"></div>
+        <div className="mode-switch">
+          <button className=${rehab === "lips" ? "active" : ""} onClick=${() => setRehab("lips")}>口唇リハ</button>
+          <button className=${rehab === "tongue" ? "active" : ""} onClick=${() => setRehab("tongue")}>舌リハ</button>
+        </div>
         <div className="mode-switch">
           <button className=${mode === "setup" ? "active" : ""} onClick=${() => setMode("setup")}>設定</button>
           <button className=${mode === "train" ? "active" : ""} onClick=${() => setMode("train")}>訓練</button>
@@ -388,6 +412,7 @@ export function App() {
           sessionActive=${sessionActive}
           startSession=${startSession}
           endSession=${endSession}
+          rehab=${rehab}
           tongueTarget=${tongueTarget}
           tongueLabel=${tongueLabel}
           tongueReps=${tongueReps}
@@ -406,7 +431,7 @@ function Stage(props) {
     canvasRef, ready, metrics, mode, calib, onSkip,
     rhythmOn, rhythmPhase, openTarget, spreadTarget, reached,
     sessionActive, startSession, endSession,
-    tongueTarget, tongueLabel, tongueReps,
+    rehab, tongueTarget, tongueLabel, tongueReps,
   } = props;
   const statusText = !ready
     ? "カメラを準備しています…"
@@ -442,7 +467,7 @@ function Stage(props) {
         html`<${TrainOverlay}
           metrics=${metrics} openTarget=${openTarget} spreadTarget=${spreadTarget}
           sessionActive=${sessionActive} startSession=${startSession} endSession=${endSession}
-          tongueTarget=${tongueTarget} tongueLabel=${tongueLabel} tongueReps=${tongueReps}
+          rehab=${rehab} tongueTarget=${tongueTarget} tongueLabel=${tongueLabel} tongueReps=${tongueReps}
         />`}
       </div>
     </div>
@@ -453,9 +478,9 @@ function Stage(props) {
 function TrainOverlay(props) {
   const {
     metrics, openTarget, spreadTarget, sessionActive, startSession, endSession,
-    tongueTarget, tongueLabel, tongueReps,
+    rehab, tongueTarget, tongueLabel, tongueReps,
   } = props;
-  const tongueMode = tongueTarget != null;
+  const tongueMode = rehab === "tongue" && tongueTarget != null;
   const hasTarget = tongueMode || openTarget != null || spreadTarget != null;
   const reps = tongueMode ? tongueReps : metrics.reps;
   const tongueHit = tongueMode && tongueLabel === tongueTarget;
@@ -687,7 +712,8 @@ function TongueCard(props) {
       <div className="card">
         <h3>① 舌の見本を登録</h3>
         <p className="hint">
-          状態を選び、その舌の形を作って「登録」を数回（5回以上目安）。<b>中立</b>も必ず登録してください。
+          画面の目標点（<b style=${{ color: "#ffe14d" }}>黄＝左右の口角</b>／<b style=${{ color: "#ff5b6e" }}>赤＝上(上唇)・下(下唇)</b>）に
+          舌先を当てた状態で「登録」を数回（5回以上目安）。<b>中立</b>も必ず登録してください。
         </p>
         <div className="grid-tools" style=${{ gridTemplateColumns: "repeat(3,1fr)" }}>
           ${TONGUE_CLASSES.map(
