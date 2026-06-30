@@ -96,10 +96,15 @@ export class MouthEngine {
     this.reps = 0;
     this._openState = "closed";
 
+    // 口角タップ位置合わせ
+    this._calib = null; // {step, deltas}
+
     // コールバック
     this.onMetrics = null; // ({openness, spread, reachedOpen, reachedSpread, reached, reps, shadowMatch, hasFace})
     this.onRep = null; // (reps)
     this.onError = null; // (Error)
+    this.onCalibrate = null; // (dx, dy) 追加すべき補正量
+    this.onCalibStep = null; // (step|null)
 
     this._bindPointer();
   }
@@ -205,6 +210,30 @@ export class MouthEngine {
   resetReps() {
     this.reps = 0;
     this._openState = "closed";
+  }
+
+  // 口角タップ位置合わせ開始（左→右の順にタップしてもらう）
+  startCalibration() {
+    this._calib = { step: 0, deltas: [] };
+    this.onCalibStep && this.onCalibStep(0);
+  }
+
+  _handleCalibTap(p) {
+    if (!this.lips) return; // 顔が検出できている必要がある
+    const corner = this._calib.step === 0 ? this.lips.cornerL : this.lips.cornerR;
+    const [px, py] = this._project(corner.x, corner.y);
+    this._calib.deltas.push([p.x - px, p.y - py]);
+    this._calib.step += 1;
+    if (this._calib.step >= 2) {
+      const d = this._calib.deltas;
+      const dx = (d[0][0] + d[1][0]) / 2;
+      const dy = (d[0][1] + d[1][1]) / 2;
+      this._calib = null;
+      this.onCalibrate && this.onCalibrate(dx, dy);
+      this.onCalibStep && this.onCalibStep(null);
+    } else {
+      this.onCalibStep && this.onCalibStep(this._calib.step);
+    }
   }
 
   // ---- プリセット（保存／復元） -------------------------------------------
@@ -522,9 +551,15 @@ export class MouthEngine {
       };
     };
     c.addEventListener("pointerdown", (e) => {
+      const p = toLocal(e);
+      // 位置合わせ中はタップを補正に使う（描画より優先）
+      if (this._calib) {
+        e.preventDefault();
+        this._handleCalibTap(p);
+        return;
+      }
       if (!this.editable) return;
       c.setPointerCapture(e.pointerId);
-      const p = toLocal(e);
       if (this.tool === "pen") {
         this._drawing = { color: this.color, size: this.penSize, points: [p] };
         this.strokes.push(this._drawing);

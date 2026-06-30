@@ -7,7 +7,7 @@ const COLORS = ["#ffd166", "#ef476f", "#06d6a0", "#4ea1ff", "#ffffff"];
 const OPEN_SCALE = 0.6; // 縦（あ）メーターの表示上限
 const SPREAD_SCALE = 0.8; // 横（い）メーターの表示上限
 const reachedStyle = { color: "#06231c", background: "#36c6a0", borderColor: "#36c6a0" };
-const APP_VERSION = "v12"; // 画面右上に表示。キャッシュ確認用。
+const APP_VERSION = "v13"; // 画面右上に表示。キャッシュ確認用。
 
 // 相対値 → 概算mm（推定）。mmPerRel が未確定なら「—」。
 function mmText(rel, mmPerRel) {
@@ -36,8 +36,10 @@ function useIsMobile() {
   return m;
 }
 
+// 「描く」は当面非表示。再開したくなったら SHOW_DRAW を true に。
+const SHOW_DRAW = false;
 const ST_TABS = [
-  { id: "draw", label: "描く" },
+  ...(SHOW_DRAW ? [{ id: "draw", label: "描く" }] : []),
   { id: "target", label: "目標" },
   { id: "shadow", label: "シャドウ" },
   { id: "view", label: "表示" },
@@ -101,7 +103,16 @@ export function App() {
       metricsRef.current = m;
     };
     eng.onError = (e) => setError(e.message);
-    eng.setEditable(true);
+    eng.setEditable(false);
+    // 口角タップ位置合わせのコールバック
+    eng.onCalibrate = (dx, dy) =>
+      setSettings((s) => ({
+        ...s,
+        lmOffX: clampNum((s.lmOffX || 0) + dx, -300, 300),
+        lmOffY: clampNum((s.lmOffY || 0) + dy, -300, 300),
+      }));
+    eng.onCalibStep = (step) =>
+      setCalib(step == null ? null : step === 0 ? "L" : "R");
 
     if (!window.isSecureContext) {
       setError(
@@ -144,13 +155,32 @@ export function App() {
     e.setSpreadTarget(spreadTarget);
   }, [tool, stampType, color, penSize, stampSize, openTarget, spreadTarget]);
 
-  // モードによって編集可否を切り替え
+  // 手書き編集の可否（「描く」非表示中は無効。誤タッチで線が入らないように）
   useEffect(() => {
-    engineRef.current && engineRef.current.setEditable(mode === "st");
+    engineRef.current && engineRef.current.setEditable(mode === "st" && SHOW_DRAW);
   }, [mode]);
+
+  // モバイルで「実際に見えている高さ」を CSS 変数に反映（アドレスバー対応・無スクロール化）
+  useEffect(() => {
+    const setH = () =>
+      document.documentElement.style.setProperty("--apph", window.innerHeight + "px");
+    setH();
+    window.addEventListener("resize", setH);
+    window.addEventListener("orientationchange", setH);
+    if (window.visualViewport) window.visualViewport.addEventListener("resize", setH);
+    return () => {
+      window.removeEventListener("resize", setH);
+      window.removeEventListener("orientationchange", setH);
+      if (window.visualViewport) window.visualViewport.removeEventListener("resize", setH);
+    };
+  }, []);
 
   // ---- 操作ハンドラ --------------------------------------------------------
   const eng = () => engineRef.current;
+  const startCalib = useCallback(() => {
+    setCalib("L");
+    eng().startCalibration();
+  }, []);
 
   const captureShadow = useCallback(() => {
     eng().captureShadow();
@@ -214,7 +244,8 @@ export function App() {
 
   const activePatient = activeId ? store.getPatient(activeId) : null;
   const isMobile = useIsMobile();
-  const [tab, setTab] = useState("draw");
+  const [tab, setTab] = useState("target");
+  const [calib, setCalib] = useState(null); // null | 'L' | 'R'（口角タップ位置合わせ）
 
   // パネルへ渡すまとめ（デスクトップ／モバイル共通で使用）
   const toolProps = {
@@ -225,6 +256,7 @@ export function App() {
     spreadTarget, setSpreadTarget, setSpreadFromCurrent,
     metrics, hasShadow, captureShadow, clearShadow,
     engine: eng, savePreset, hasPatient: !!activeId,
+    startCalib, calib,
   };
   const patientProps = { patients, activeId, setActiveId, activePatient, loadPreset, mode, setError };
   const practiceProps = {
@@ -247,7 +279,7 @@ export function App() {
     }
   };
 
-  const stage = html`<${Stage} canvasRef=${canvasRef} metrics=${metrics} openTarget=${openTarget} ready=${ready} />`;
+  const stage = html`<${Stage} canvasRef=${canvasRef} metrics=${metrics} ready=${ready} calib=${calib} />`;
 
   // ---- 描画 ----------------------------------------------------------------
   return html`
@@ -306,7 +338,7 @@ export function App() {
 }
 
 // ---- 中央ステージ ----------------------------------------------------------
-function Stage({ canvasRef, metrics, openTarget, ready }) {
+function Stage({ canvasRef, metrics, ready, calib }) {
   const statusText = !ready
     ? "カメラを準備しています…"
     : !metrics.hasFace
@@ -318,6 +350,10 @@ function Stage({ canvasRef, metrics, openTarget, ready }) {
       <div className="stage-canvas-wrap">
         <canvas ref=${canvasRef} className="mouth"></canvas>
         <div className=${"stage-status" + (warn ? " warn" : "")}>${statusText}</div>
+        ${calib &&
+        html`<div className="calib-banner">
+          画面に映る自分の<b>${calib === "L" ? "左" : "右"}の口角</b>をタップ
+        </div>`}
       </div>
     </div>
   `;
@@ -545,9 +581,9 @@ function TargetCard(props) {
 }
 
 function ViewCard(props) {
-  const { settings, setSettings } = props;
+  const { settings, setSettings, startCalib, calib } = props;
   const set = (patch) => setSettings((s) => ({ ...s, ...patch }));
-  const nudge = (dx, dy) => set({ lmOffX: clampNum((settings.lmOffX || 0) + dx, -80, 80), lmOffY: clampNum((settings.lmOffY || 0) + dy, -80, 80) });
+  const nudge = (dx, dy) => set({ lmOffX: clampNum((settings.lmOffX || 0) + dx, -120, 120), lmOffY: clampNum((settings.lmOffY || 0) + dy, -120, 120) });
   return html`
     <div className="card">
       <h3>映像の安定化・表示</h3>
@@ -569,19 +605,28 @@ function ViewCard(props) {
 
       <div style=${{ marginTop: 12 }}>
         <div className="row between small">
-          <span>点・輪郭のずれ補正</span>
-          <span className="muted">X ${settings.lmOffX || 0} / Y ${settings.lmOffY || 0}px</span>
+          <span>点・輪郭の位置合わせ</span>
+          <span className="muted">X ${Math.round(settings.lmOffX || 0)} / Y ${Math.round(settings.lmOffY || 0)}px</span>
+        </div>
+        <button className=${"primary" + (calib ? " active" : "")} style=${{ width: "100%", marginTop: 8 }}
+          onClick=${startCalib}>
+          ${calib ? (calib === "L" ? "左の口角をタップ…" : "右の口角をタップ…") : "🎯 口角タップで位置合わせ"}
+        </button>
+        <p className="hint">
+          ボタンを押し、画面の自分の<b>左→右の口角</b>を順にタップすると、点・輪郭が口元に合います。
+        </p>
+        <div className="row between small" style=${{ marginTop: 6 }}>
+          <span className="muted">手動微調整</span>
+          <button className="ghost small" onClick=${() => set({ lmOffX: 0, lmOffY: 0 })}>リセット</button>
         </div>
         <div className="nudge">
           <button onClick=${() => nudge(0, -3)}>▲</button>
           <div className="row" style=${{ gap: 6 }}>
             <button onClick=${() => nudge(-3, 0)}>◀</button>
-            <button className="ghost small" onClick=${() => set({ lmOffX: 0, lmOffY: 0 })}>リセット</button>
             <button onClick=${() => nudge(3, 0)}>▶</button>
           </div>
           <button onClick=${() => nudge(0, 3)}>▼</button>
         </div>
-        <p className="hint">点や輪郭が口元から少しずれて見える場合に、矢印で位置を微調整できます。</p>
       </div>
     </div>
   `;
@@ -607,7 +652,7 @@ function SaveCard(props) {
 function ToolPanel(props) {
   return html`
     <div className="side right">
-      <${DrawCard} ...${props} />
+      ${SHOW_DRAW && html`<${DrawCard} ...${props} />`}
       <${TargetCard} ...${props} />
       <${ShadowCard} ...${props} />
       <${ViewCard} ...${props} />
