@@ -98,6 +98,7 @@ export class MouthEngine {
 
     // 口角タップ位置合わせ
     this._calib = null; // {step, deltas}
+    this.tapMarks = []; // タップ位置の一時表示（点線の丸）
 
     // コールバック
     this.onMetrics = null; // ({openness, spread, reachedOpen, reachedSpread, reached, reps, shadowMatch, hasFace})
@@ -218,7 +219,13 @@ export class MouthEngine {
     this.onCalibStep && this.onCalibStep(0);
   }
 
+  cancelCalibration() {
+    this._calib = null;
+    this.onCalibStep && this.onCalibStep(null);
+  }
+
   _handleCalibTap(p) {
+    this.tapMarks.push({ x: p.x, y: p.y, t: performance.now() }); // タップ印
     if (!this.lips) return; // 顔が検出できている必要がある
     const corner = this._calib.step === 0 ? this.lips.cornerL : this.lips.cornerR;
     const [px, py] = this._project(corner.x, corner.y);
@@ -336,6 +343,8 @@ export class MouthEngine {
       this._drawRawCover(ctx); // まだ顔ロック前：素の映像を表示
     }
 
+    if (this.tapMarks.length) this._drawTapMarks(ctx, t); // タップ印
+
     if (this.onMetrics) {
       this.onMetrics({
         openness: this.openness,
@@ -438,6 +447,24 @@ export class MouthEngine {
     ctx.translate(-sm.cx, -sm.cy);
     // 解析に使ったのと同じ固定フレームを描画（点・輪郭とズレない）
     ctx.drawImage(this.frameCanvas, 0, 0);
+    ctx.restore();
+  }
+
+  // タップ位置に点線の丸を一瞬表示（広がりながらフェード）
+  _drawTapMarks(ctx, now) {
+    const LIFE = 700;
+    this.tapMarks = this.tapMarks.filter((m) => now - m.t < LIFE);
+    ctx.save();
+    ctx.setLineDash([6, 6]);
+    ctx.lineWidth = 3;
+    for (const m of this.tapMarks) {
+      const age = (now - m.t) / LIFE; // 0..1
+      ctx.globalAlpha = 1 - age;
+      ctx.strokeStyle = "#ffe14d";
+      ctx.beginPath();
+      ctx.arc(m.x, m.y, 12 + age * 20, 0, Math.PI * 2);
+      ctx.stroke();
+    }
     ctx.restore();
   }
 

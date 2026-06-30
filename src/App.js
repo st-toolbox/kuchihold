@@ -7,7 +7,7 @@ const COLORS = ["#ffd166", "#ef476f", "#06d6a0", "#4ea1ff", "#ffffff"];
 const OPEN_SCALE = 0.6; // 縦（あ）メーターの表示上限
 const SPREAD_SCALE = 0.8; // 横（い）メーターの表示上限
 const reachedStyle = { color: "#06231c", background: "#36c6a0", borderColor: "#36c6a0" };
-const APP_VERSION = "v13"; // 画面右上に表示。キャッシュ確認用。
+const APP_VERSION = "v14"; // 画面右上に表示。キャッシュ確認用。
 
 // 相対値 → 概算mm（推定）。mmPerRel が未確定なら「—」。
 function mmText(rel, mmPerRel) {
@@ -181,6 +181,19 @@ export function App() {
     setCalib("L");
     eng().startCalibration();
   }, []);
+  const skipCalib = useCallback(() => {
+    eng().cancelCalibration();
+    setCalib(null);
+  }, []);
+
+  // 起動時：カメラ準備ができたら最初に口角タップ位置合わせを表示
+  const autoCalibRef = useRef(false);
+  useEffect(() => {
+    if (ready && !autoCalibRef.current) {
+      autoCalibRef.current = true;
+      startCalib();
+    }
+  }, [ready, startCalib]);
 
   const captureShadow = useCallback(() => {
     eng().captureShadow();
@@ -279,7 +292,7 @@ export function App() {
     }
   };
 
-  const stage = html`<${Stage} canvasRef=${canvasRef} metrics=${metrics} ready=${ready} calib=${calib} />`;
+  const stage = html`<${Stage} canvasRef=${canvasRef} metrics=${metrics} ready=${ready} calib=${calib} onSkip=${skipCalib} />`;
 
   // ---- 描画 ----------------------------------------------------------------
   return html`
@@ -338,7 +351,7 @@ export function App() {
 }
 
 // ---- 中央ステージ ----------------------------------------------------------
-function Stage({ canvasRef, metrics, ready, calib }) {
+function Stage({ canvasRef, metrics, ready, calib, onSkip }) {
   const statusText = !ready
     ? "カメラを準備しています…"
     : !metrics.hasFace
@@ -349,10 +362,14 @@ function Stage({ canvasRef, metrics, ready, calib }) {
     <div className="stage">
       <div className="stage-canvas-wrap">
         <canvas ref=${canvasRef} className="mouth"></canvas>
-        <div className=${"stage-status" + (warn ? " warn" : "")}>${statusText}</div>
+        ${!calib &&
+        html`<div className=${"stage-status" + (warn ? " warn" : "")}>${statusText}</div>`}
+        ${calib &&
+        html`<button className="calib-skip" onClick=${onSkip}>スキップ ✕</button>`}
         ${calib &&
         html`<div className="calib-banner">
-          画面に映る自分の<b>${calib === "L" ? "左" : "右"}の口角</b>をタップ
+          <span className="step">${calib === "L" ? "①" : "②"}</span>
+          画面の自分の<b>${calib === "L" ? "左" : "右"}の口角</b>をタップ
         </div>`}
       </div>
     </div>
@@ -525,8 +542,7 @@ function ShadowCard(props) {
         </span>`}
       </h3>
       <p className="hint">
-        患者が目標の形まで口を動かせた瞬間に撮影すると、その口形が半透明で重なり、
-        次回からの目標になります。撮影時の形に近づくと画面が緑枠で「ぴったり！」と知らせます。
+        目標の形になった瞬間に撮影。半透明で重なり、近づくと緑枠で「ぴったり！」と知らせます。
       </p>
       <div className="row wrap">
         <button className="primary" onClick=${captureShadow}>📸 今の口元を目標に</button>
@@ -550,8 +566,7 @@ function TargetCard(props) {
     <div className="card">
       <h3>運動の目標（あ＝縦 / い＝横）</h3>
       <p className="hint">
-        患者に目標の形まで動かしてもらい、その瞬間にボタンを押すと目標値になります。
-        縦・横は別々に設定でき、両方設定すると「両方同時に達成」で1回とカウントします。
+        目標の形にして「目標に」を押すと設定。縦・横は別々、両方設定時は同時達成で1回。
       </p>
       <div style=${{ marginTop: 6 }}>
         <div className="row between small"><span>あ（縦の開き）</span>
@@ -573,8 +588,8 @@ function TargetCard(props) {
           <button className="ghost" onClick=${() => setSpreadTarget(null)} disabled=${spreadTarget == null}>解除</button>
         </div>
       </div>
-      <p className="hint" style=${{ marginTop: 10 }}>
-        mm は平均的な目の寸法（片目幅28.5mm・目頭間32mm）を基準にした<b>概算（推定値）</b>です。正面で計測してください。
+      <p className="hint" style=${{ marginTop: 8 }}>
+        mm は<b>概算（推定）</b>。正面で計測すると精度が上がります。
       </p>
     </div>
   `;
@@ -613,7 +628,7 @@ function ViewCard(props) {
           ${calib ? (calib === "L" ? "左の口角をタップ…" : "右の口角をタップ…") : "🎯 口角タップで位置合わせ"}
         </button>
         <p className="hint">
-          ボタンを押し、画面の自分の<b>左→右の口角</b>を順にタップすると、点・輪郭が口元に合います。
+          画面の自分の<b>左→右の口角</b>を順にタップすると点・輪郭が合います。
         </p>
         <div className="row between small" style=${{ marginTop: 6 }}>
           <span className="muted">手動微調整</span>
