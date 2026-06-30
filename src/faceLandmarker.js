@@ -26,10 +26,13 @@ export const EYE = {
   innerL: 362, // 被験者の左目 目頭
 };
 
-// 概算 mm 換算用：片目の幅（目頭〜目尻）の平均値を 32mm と仮定する。
-// 距離が分からない単眼カメラでも、毎フレーム目幅で校正して大まかな実寸を推定する。
+// 概算 mm 換算用の解剖学的な基準値（平均）。
+//  - 片目の幅（目頭〜目尻）≈ 28.5mm
+//  - 左右の目頭間（内眼角間）≈ 32mm
+// 距離が分からない単眼カメラでも、毎フレームこれらで校正して大まかな実寸を推定する。
 // あくまで推定値（個人差・顔の向き・レンズ歪みで誤差あり）。
-export const ASSUMED_EYE_WIDTH_MM = 32;
+export const EYE_WIDTH_MM = 28.5;
+export const INNER_CANTHAL_MM = 32;
 
 // 唇の輪郭（Face Mesh の標準ループ）。外側＝唇の外縁、内側＝口の開口部。
 const LIP_OUTER = [
@@ -124,12 +127,16 @@ export function detectMouth(landmarker, video, tMs) {
   const spread = Math.hypot(cr.x - cl.x, cr.y - cl.y) / faceSize;
 
   // 概算 mm 換算係数：相対値1.0あたりの mm。
-  // 片目幅（左右平均）を 32mm と仮定し、毎フレーム校正する。
+  // 「片目幅(28.5mm)」と「目頭間(32mm)」の2基準から mm/正規化単位 を求めて平均し、
+  // 毎フレーム校正する（基準を2つにして検出ノイズ・顔の向きに頑健化）。
   const eyeWidth =
     (Math.hypot(er.x - ir.x, er.y - ir.y) +
       Math.hypot(el.x - il.x, el.y - il.y)) /
       2 || 0.0001;
-  const mmPerRel = (faceSize / eyeWidth) * ASSUMED_EYE_WIDTH_MM;
+  const innerCanthal = Math.hypot(ir.x - il.x, ir.y - il.y) || 0.0001;
+  const px2mm =
+    (EYE_WIDTH_MM / eyeWidth + INNER_CANTHAL_MM / innerCanthal) / 2;
+  const mmPerRel = faceSize * px2mm;
 
   // 唇の輪郭と口角（描画用、すべて正規化座標）
   const lips = {

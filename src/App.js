@@ -484,7 +484,8 @@ function ToolPanel(props) {
         </div>
 
         <p className="hint" style=${{ marginTop: 10 }}>
-          mm は片目幅32mmを基準にした<b>概算（推定値）</b>です。正面で計測してください。
+          mm は平均的な目の寸法（片目幅28.5mm・目頭間32mm）を基準にした<b>概算（推定値）</b>です。
+          正面で計測してください。
         </p>
       </div>
 
@@ -565,7 +566,7 @@ function PracticePanel({ metrics, openTarget, spreadTarget, startSession, endSes
         html`<p className="hint" style=${{ marginTop: 10 }}>
           目標が未設定です。ST指導モードで目標を設定するか、保存した目標を読み込んでください。
         </p>`}
-        <p className="hint" style=${{ marginTop: 8 }}>mm は概算（推定値・片目幅32mm基準）です。</p>
+        <p className="hint" style=${{ marginTop: 8 }}>mm は概算（推定値・平均的な目の寸法を基準）です。</p>
       </div>
 
       <div className="card" style=${{ textAlign: "center" }}>
