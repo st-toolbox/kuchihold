@@ -87,9 +87,13 @@ export function detectMouth(landmarker, video, tMs) {
   // 傾きは目線の角度から（口の動きの影響を受けない）
   const angle = Math.atan2(el.y - er.y, el.x - er.x);
 
-  // 開口度：内側上下唇の距離を顔サイズで正規化（顔の大きさにも口の動きにも頑健）
+  // 開口度（あ＝縦の開き）：内側上下唇の距離を顔サイズで正規化
   const openRaw = Math.hypot(ti.x - bi.x, ti.y - bi.y);
   const openness = openRaw / faceSize;
 
-  return { centerX, centerY, faceSize, angle, openness };
+  // 横の広がり（い＝口角を横に引く）：左右口角の距離を顔サイズで正規化。
+  // 開閉とは独立して「い」の動きを評価できる。
+  const spread = Math.hypot(cr.x - cl.x, cr.y - cl.y) / faceSize;
+
+  return { centerX, centerY, faceSize, angle, openness, spread };
 }

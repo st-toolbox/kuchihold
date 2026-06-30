@@ -67,15 +67,20 @@ export class MouthEngine {
     this.stampSize = 90;
     this._drawing = null;
 
-    // 開口度・反復検出
-    this.openTarget = null; // 0..1 or null
+    // 口の形の指標・反復検出
+    // openness = あ（縦の開き）、spread = い（横の広がり）。各々に目標を持てる。
+    this.openTarget = null; // 0..1 or null（縦）
+    this.spreadTarget = null; // 0..1 or null（横）
     this.openness = 0;
-    this.reached = false;
+    this.spread = 0;
+    this.reachedOpen = false;
+    this.reachedSpread = false;
+    this.reached = false; // 設定された目標が「すべて」到達
     this.reps = 0;
     this._openState = "closed";
 
     // コールバック
-    this.onMetrics = null; // ({openness, reached, reps, hasFace})
+    this.onMetrics = null; // ({openness, spread, reachedOpen, reachedSpread, reached, reps, hasFace})
     this.onRep = null; // (reps)
     this.onError = null; // (Error)
 
@@ -144,6 +149,9 @@ export class MouthEngine {
   setOpenTarget(v) {
     this.openTarget = v;
   }
+  setSpreadTarget(v) {
+    this.spreadTarget = v;
+  }
 
   // ---- オーバーレイ操作 ----------------------------------------------------
 
@@ -184,6 +192,7 @@ export class MouthEngine {
       strokes: JSON.parse(JSON.stringify(this.strokes)),
       stamps: JSON.parse(JSON.stringify(this.stamps)),
       openTarget: this.openTarget,
+      spreadTarget: this.spreadTarget,
       shadow: this.hasShadow ? this.shadowCanvas.toDataURL("image/webp", 0.7) : null,
     };
   }
@@ -192,6 +201,7 @@ export class MouthEngine {
     this.strokes = JSON.parse(JSON.stringify(preset.strokes || []));
     this.stamps = JSON.parse(JSON.stringify(preset.stamps || []));
     this.openTarget = preset.openTarget ?? null;
+    this.spreadTarget = preset.spreadTarget ?? null;
     this.hasShadow = false;
     if (preset.shadow) {
       const img = new Image();
@@ -226,7 +236,7 @@ export class MouthEngine {
       hasFace = true;
       this.lastFaceAt = t;
       this._updateTransform(mouth, v, t);
-      this._updateOpenness(mouth.openness);
+      this._updateMetrics(mouth.openness, mouth.spread);
     }
 
     const ctx = this.ctx;
@@ -248,6 +258,9 @@ export class MouthEngine {
     if (this.onMetrics) {
       this.onMetrics({
         openness: this.openness,
+        spread: this.spread,
+        reachedOpen: this.reachedOpen,
+        reachedSpread: this.reachedSpread,
         reached: this.reached,
         reps: this.reps,
         hasFace,
@@ -294,22 +307,35 @@ export class MouthEngine {
     this.sm.angle = this._filters.angle.filter(angle, t);
   }
 
-  _updateOpenness(openness) {
+  _updateMetrics(openness, spread) {
     // 軽く平滑化
     this.openness += (openness - this.openness) * 0.5;
-    const T = this.openTarget;
-    if (T == null) {
-      this.reached = false;
-      return;
-    }
-    this.reached = this.openness >= T;
-    // ヒステリシス付きで反復をカウント
-    const exit = Math.max(0, T * 0.55);
-    if (this._openState === "closed" && this.openness >= T) {
+    this.spread += (spread - this.spread) * 0.5;
+
+    const To = this.openTarget;
+    const Ts = this.spreadTarget;
+    this.reachedOpen = To != null && this.openness >= To;
+    this.reachedSpread = Ts != null && this.spread >= Ts;
+
+    const anyTarget = To != null || Ts != null;
+    // 設定された目標が「すべて」到達しているか（未設定の軸は無視）
+    const allReached =
+      anyTarget &&
+      (To == null || this.openness >= To) &&
+      (Ts == null || this.spread >= Ts);
+    // 保持判定（ヒステリシス）：設定軸がすべて緩め閾値以上なら「まだ保持中」
+    const stillHolding =
+      anyTarget &&
+      (To == null || this.openness >= To * 0.6) &&
+      (Ts == null || this.spread >= Ts * 0.6);
+
+    this.reached = allReached;
+    // 反復カウント：目標の口の形に到達するたびに +1
+    if (this._openState === "closed" && allReached) {
       this._openState = "open";
       this.reps += 1;
       this.onRep && this.onRep(this.reps);
-    } else if (this._openState === "open" && this.openness <= exit) {
+    } else if (this._openState === "open" && !stillHolding) {
       this._openState = "closed";
     }
   }

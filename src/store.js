@@ -127,6 +127,7 @@ export function savePreset(patientId, preset) {
     strokes: preset.strokes || [],
     stamps: preset.stamps || [],
     openTarget: preset.openTarget ?? null,
+    spreadTarget: preset.spreadTarget ?? null,
     shadow: preset.shadow ?? null,
     createdAt: stamp(),
   };

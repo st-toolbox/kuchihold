@@ -4,12 +4,22 @@ import { MouthEngine, STAMP_TYPES } from "./mouthEngine.js";
 import * as store from "./store.js";
 
 const COLORS = ["#ffd166", "#ef476f", "#06d6a0", "#4ea1ff", "#ffffff"];
-const OPEN_SCALE = 0.6; // 開口度メーターの表示上限（顔サイズ基準の openness のおおよその最大）
+const OPEN_SCALE = 0.6; // 縦（あ）メーターの表示上限
+const SPREAD_SCALE = 0.8; // 横（い）メーターの表示上限
+const reachedStyle = { color: "#06231c", background: "#36c6a0", borderColor: "#36c6a0" };
 
 export function App() {
   const canvasRef = useRef(null);
   const engineRef = useRef(null);
-  const metricsRef = useRef({ openness: 0, reached: false, reps: 0, hasFace: false });
+  const metricsRef = useRef({
+    openness: 0,
+    spread: 0,
+    reachedOpen: false,
+    reachedSpread: false,
+    reached: false,
+    reps: 0,
+    hasFace: false,
+  });
   const sessionStartRef = useRef(null);
 
   const [ready, setReady] = useState(false);
@@ -27,6 +37,7 @@ export function App() {
   const [penSize, setPenSize] = useState(7);
   const [stampSize, setStampSize] = useState(90);
   const [openTarget, setOpenTarget] = useState(null);
+  const [spreadTarget, setSpreadTarget] = useState(null);
   const [settings, setSettings] = useState({
     mirror: true,
     level: false,
@@ -84,7 +95,8 @@ export function App() {
     e.setPenSize(penSize);
     e.setStampSize(stampSize);
     e.setOpenTarget(openTarget);
-  }, [tool, stampType, color, penSize, stampSize, openTarget]);
+    e.setSpreadTarget(spreadTarget);
+  }, [tool, stampType, color, penSize, stampSize, openTarget, spreadTarget]);
 
   // モードによって編集可否を切り替え
   useEffect(() => {
@@ -106,6 +118,10 @@ export function App() {
     const v = +metricsRef.current.openness.toFixed(3);
     setOpenTarget(v);
   }, []);
+  const setSpreadFromCurrent = useCallback(() => {
+    const v = +metricsRef.current.spread.toFixed(3);
+    setSpreadTarget(v);
+  }, []);
 
   const savePreset = useCallback(
     (name) => {
@@ -126,6 +142,7 @@ export function App() {
   const loadPreset = useCallback((preset) => {
     eng().loadPreset(preset);
     setOpenTarget(preset.openTarget ?? null);
+    setSpreadTarget(preset.spreadTarget ?? null);
     setHasShadow(!!preset.shadow);
   }, []);
 
@@ -202,7 +219,10 @@ export function App() {
               stampSize=${stampSize} setStampSize=${setStampSize}
               settings=${settings} setSettings=${setSettings}
               openTarget=${openTarget} setOpenTarget=${setOpenTarget}
+              spreadTarget=${spreadTarget} setSpreadTarget=${setSpreadTarget}
               setOpenFromCurrent=${setOpenFromCurrent}
+              setSpreadFromCurrent=${setSpreadFromCurrent}
+              metrics=${metrics}
               hasShadow=${hasShadow} captureShadow=${captureShadow} clearShadow=${clearShadow}
               engine=${eng}
               savePreset=${savePreset}
@@ -211,6 +231,7 @@ export function App() {
           : html`<${PracticePanel}
               metrics=${metrics}
               openTarget=${openTarget}
+              spreadTarget=${spreadTarget}
               startSession=${startSession}
               endSession=${endSession}
               hasPatient=${!!activeId}
@@ -239,10 +260,10 @@ function Stage({ canvasRef, metrics, openTarget, ready }) {
   `;
 }
 
-// ---- 開口度メーター --------------------------------------------------------
-function OpenMeter({ openness, openTarget, reached }) {
-  const pct = Math.min(100, (openness / OPEN_SCALE) * 100);
-  const tPct = openTarget != null ? Math.min(100, (openTarget / OPEN_SCALE) * 100) : null;
+// ---- メーター（縦/横 共通）-------------------------------------------------
+function Meter({ value, target, scale, reached }) {
+  const pct = Math.min(100, (value / scale) * 100);
+  const tPct = target != null ? Math.min(100, (target / scale) * 100) : null;
   return html`
     <div className=${"meter" + (reached ? " meter-reached" : "")}>
       <div className="fill" style=${{ width: pct + "%" }}></div>
@@ -353,7 +374,10 @@ function ToolPanel(props) {
   const {
     tool, setTool, stampType, setStampType, color, setColor,
     penSize, setPenSize, stampSize, setStampSize,
-    settings, setSettings, openTarget, setOpenTarget, setOpenFromCurrent,
+    settings, setSettings,
+    openTarget, setOpenTarget, setOpenFromCurrent,
+    spreadTarget, setSpreadTarget, setSpreadFromCurrent,
+    metrics,
     hasShadow, captureShadow, clearShadow, engine, savePreset, hasPatient,
   } = props;
   const [presetName, setPresetName] = useState("");
@@ -423,13 +447,32 @@ function ToolPanel(props) {
       </div>
 
       <div className="card">
-        <h3>開口度の目標</h3>
-        <div className="row wrap">
-          <button onClick=${setOpenFromCurrent}>今の開きを目標に</button>
-          <button className="ghost" onClick=${() => setOpenTarget(null)} disabled=${openTarget == null}>解除</button>
+        <h3>運動の目標（あ＝縦 / い＝横）</h3>
+        <p className="hint">
+          患者に目標の形まで動かしてもらい、その瞬間にボタンを押すと目標値になります。
+          縦・横は別々に設定でき、両方設定すると「両方同時に達成」で1回とカウントします。
+        </p>
+
+        <div style=${{ marginTop: 6 }}>
+          <div className="row between small"><span>あ（縦の開き）</span>
+            <span className="muted">今: ${metrics.openness.toFixed(2)} / 目標: ${openTarget == null ? "なし" : openTarget.toFixed(2)}</span>
+          </div>
+          <${Meter} value=${metrics.openness} target=${openTarget} scale=${OPEN_SCALE} reached=${metrics.reachedOpen} />
+          <div className="row wrap" style=${{ marginTop: 6 }}>
+            <button onClick=${setOpenFromCurrent}>今の縦を目標に</button>
+            <button className="ghost" onClick=${() => setOpenTarget(null)} disabled=${openTarget == null}>解除</button>
+          </div>
         </div>
-        <div className="muted small" style=${{ marginTop: 8 }}>
-          現在の目標：${openTarget == null ? "なし" : openTarget.toFixed(2)}
+
+        <div style=${{ marginTop: 12 }}>
+          <div className="row between small"><span>い（横の広がり）</span>
+            <span className="muted">今: ${metrics.spread.toFixed(2)} / 目標: ${spreadTarget == null ? "なし" : spreadTarget.toFixed(2)}</span>
+          </div>
+          <${Meter} value=${metrics.spread} target=${spreadTarget} scale=${SPREAD_SCALE} reached=${metrics.reachedSpread} />
+          <div className="row wrap" style=${{ marginTop: 6 }}>
+            <button onClick=${setSpreadFromCurrent}>今の横を目標に</button>
+            <button className="ghost" onClick=${() => setSpreadTarget(null)} disabled=${spreadTarget == null}>解除</button>
+          </div>
         </div>
       </div>
 
@@ -476,24 +519,39 @@ function ToolPanel(props) {
 }
 
 // ---- 右：自主練習パネル ----------------------------------------------------
-function PracticePanel({ metrics, openTarget, startSession, endSession, hasPatient, sessionActive }) {
+function PracticePanel({ metrics, openTarget, spreadTarget, startSession, endSession, hasPatient, sessionActive }) {
+  const noTarget = openTarget == null && spreadTarget == null;
   return html`
     <div className="side right">
       <div className="card">
-        <h3>開き具合</h3>
-        <${OpenMeter} openness=${metrics.openness} openTarget=${openTarget} reached=${metrics.reached} />
-        <div className="row between" style=${{ marginTop: 10 }}>
-          <span className="muted">目標到達</span>
-          <span className=${"badge"} style=${metrics.reached ? { color: "#06231c", background: "#36c6a0", borderColor: "#36c6a0" } : {}}>
-            ${metrics.reached ? "到達！" : "もう少し"}
-          </span>
+        <h3>口の形</h3>
+
+        <div className="row between small"><span>あ（縦の開き）</span>
+          ${openTarget != null &&
+          html`<span className=${"badge"} style=${metrics.reachedOpen ? reachedStyle : {}}>${metrics.reachedOpen ? "到達" : "もう少し"}</span>`}
         </div>
+        <${Meter} value=${metrics.openness} target=${openTarget} scale=${OPEN_SCALE} reached=${metrics.reachedOpen} />
+
+        <div className="row between small" style=${{ marginTop: 12 }}><span>い（横の広がり）</span>
+          ${spreadTarget != null &&
+          html`<span className=${"badge"} style=${metrics.reachedSpread ? reachedStyle : {}}>${metrics.reachedSpread ? "到達" : "もう少し"}</span>`}
+        </div>
+        <${Meter} value=${metrics.spread} target=${spreadTarget} scale=${SPREAD_SCALE} reached=${metrics.reachedSpread} />
+
+        ${noTarget &&
+        html`<p className="hint" style=${{ marginTop: 10 }}>
+          目標が未設定です。ST指導モードで目標を設定するか、保存した目標を読み込んでください。
+        </p>`}
       </div>
 
       <div className="card" style=${{ textAlign: "center" }}>
         <h3>到達回数</h3>
         <div className="rep-count">${metrics.reps}</div>
-        <p className="hint">目標の開きまで動かすたびにカウントされます。</p>
+        <p className="hint">
+          ${openTarget != null && spreadTarget != null
+            ? "縦・横の両方の目標に達するたびにカウントされます。"
+            : "目標の形まで動かすたびにカウントされます。"}
+        </p>
       </div>
 
       <div className="card">
