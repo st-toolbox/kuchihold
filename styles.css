@@ -374,6 +374,16 @@ canvas.mouth {
   color: var(--muted);
   line-height: 1.5;
 }
+.match-banner {
+  background: var(--accent);
+  color: #06231c;
+  font-weight: 800;
+  text-align: center;
+  padding: 10px;
+  border-radius: var(--radius);
+  letter-spacing: 0.05em;
+}
+
 .error-box {
   margin: 12px;
   padding: 12px 14px;

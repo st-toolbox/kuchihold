@@ -129,6 +129,8 @@ export function savePreset(patientId, preset) {
     openTarget: preset.openTarget ?? null,
     spreadTarget: preset.spreadTarget ?? null,
     shadow: preset.shadow ?? null,
+    shadowOpen: preset.shadowOpen ?? null,
+    shadowSpread: preset.shadowSpread ?? null,
     createdAt: stamp(),
   };
   p.presets.unshift(record);

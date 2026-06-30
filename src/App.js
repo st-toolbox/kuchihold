@@ -25,6 +25,7 @@ export function App() {
     reachedSpread: false,
     reached: false,
     reps: 0,
+    shadowMatch: false,
     hasFace: false,
   });
   const sessionStartRef = useRef(null);
@@ -438,10 +439,17 @@ function ToolPanel(props) {
       </div>
 
       <div className="card">
-        <h3>シャドウ目標（目標の口形）</h3>
+        <h3>
+          シャドウ目標（目標の口形）
+          ${hasShadow &&
+          html`<span className="badge" style=${{ marginLeft: 8, ...(metrics.shadowMatch ? reachedStyle : {}) }}>
+            ${metrics.shadowMatch ? "ぴったり" : "ずれ"}
+          </span>`}
+        </h3>
         <p className="hint">
           患者が目標の形まで口を動かせた瞬間に撮影すると、その口形が半透明で
-          重なり、次回からの目標になります。
+          重なり、次回からの目標になります。撮影時の形に近づくと画面が緑枠で
+          「ぴったり！」と知らせます。
         </p>
         <div className="row wrap">
           <button className="primary" onClick=${captureShadow}>📸 今の口元を目標に</button>
@@ -539,6 +547,9 @@ function PracticePanel({ metrics, openTarget, spreadTarget, startSession, endSes
   const noTarget = openTarget == null && spreadTarget == null;
   return html`
     <div className="side right">
+      ${metrics.shadowMatch &&
+      html`<div className="match-banner">✓ ぴったり！</div>`}
+
       <div className="card">
         <h3>口の形</h3>
 

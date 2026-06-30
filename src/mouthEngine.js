@@ -17,6 +17,10 @@ import { createFaceLandmarker, detectMouth } from "./faceLandmarker.js";
 const INTERNAL_W = 720;
 const INTERNAL_H = 960; // 3:4 縦
 
+// シャドウ「ぴったり」判定の許容差（相対値）。縦・横ともこの範囲内なら一致。
+const MATCH_TOL_OPEN = 0.05;
+const MATCH_TOL_SPREAD = 0.06;
+
 const DEFAULTS = {
   mirror: true, // ミラーセラピー：左右反転
   level: false, // 傾き補正（口角を水平に）— 既定オフ
@@ -42,6 +46,10 @@ export class MouthEngine {
     this.shadowCanvas.width = INTERNAL_W;
     this.shadowCanvas.height = INTERNAL_H;
 
+    // 解析と描画で同じフレームを使うためのバッファ（点・輪郭のズレ防止）
+    this.frameCanvas = document.createElement("canvas");
+    this.frameCtx = this.frameCanvas.getContext("2d");
+
     this.settings = { ...DEFAULTS };
     this.landmarker = null;
     this.stream = null;
@@ -59,6 +67,10 @@ export class MouthEngine {
     this.stamps = []; // {type,x,y,size,color}
     this.shadow = null; // {alpha, hasImage} / 画像は shadowCanvas に保持
     this.hasShadow = false;
+    // シャドウ撮影時の口の形（縦・横）。現在の形がこれに近いと「ぴったり」と判定。
+    this.shadowOpen = null;
+    this.shadowSpread = null;
+    this.shadowMatch = false;
 
     // 入力
     this.editable = false;
@@ -83,7 +95,7 @@ export class MouthEngine {
     this._openState = "closed";
 
     // コールバック
-    this.onMetrics = null; // ({openness, spread, reachedOpen, reachedSpread, reached, reps, hasFace})
+    this.onMetrics = null; // ({openness, spread, reachedOpen, reachedSpread, reached, reps, shadowMatch, hasFace})
     this.onRep = null; // (reps)
     this.onError = null; // (Error)
 
@@ -172,6 +184,9 @@ export class MouthEngine {
 
   clearShadow() {
     this.hasShadow = false;
+    this.shadowOpen = null;
+    this.shadowSpread = null;
+    this.shadowMatch = false;
   }
 
   /** 現在の口元（映像のみ・目標は含めない）をシャドウ目標として確定する */
@@ -180,6 +195,9 @@ export class MouthEngine {
     sc.clearRect(0, 0, INTERNAL_W, INTERNAL_H);
     this._drawVideoCrop(sc); // 映像クロップだけを焼き込む
     this.hasShadow = true;
+    // 撮影時の口の形を記録し、後で「ぴったり」判定に使う
+    this.shadowOpen = this.openness;
+    this.shadowSpread = this.spread;
   }
 
   resetReps() {
@@ -197,6 +215,8 @@ export class MouthEngine {
       openTarget: this.openTarget,
       spreadTarget: this.spreadTarget,
       shadow: this.hasShadow ? this.shadowCanvas.toDataURL("image/webp", 0.7) : null,
+      shadowOpen: this.shadowOpen,
+      shadowSpread: this.shadowSpread,
     };
   }
 
@@ -206,6 +226,9 @@ export class MouthEngine {
     this.openTarget = preset.openTarget ?? null;
     this.spreadTarget = preset.spreadTarget ?? null;
     this.hasShadow = false;
+    this.shadowMatch = false;
+    this.shadowOpen = preset.shadowOpen ?? null;
+    this.shadowSpread = preset.shadowSpread ?? null;
     if (preset.shadow) {
       const img = new Image();
       img.onload = () => {
@@ -226,10 +249,18 @@ export class MouthEngine {
     const v = this.video;
     if (!v.videoWidth) return;
 
+    // 現フレームをバッファに固定。解析も描画もこの同じ画像を使うことで、
+    // 映像と口角点・輪郭のズレ（検出と描画のフレーム差）をなくす。
+    if (this.frameCanvas.width !== v.videoWidth) {
+      this.frameCanvas.width = v.videoWidth;
+      this.frameCanvas.height = v.videoHeight;
+    }
+    this.frameCtx.drawImage(v, 0, 0);
+
     const t = performance.now();
     let mouth = null;
     try {
-      mouth = detectMouth(this.landmarker, v, t);
+      mouth = detectMouth(this.landmarker, this.frameCanvas, t);
     } catch {
       mouth = null;
     }
@@ -248,6 +279,14 @@ export class MouthEngine {
       this.lips = null;
     }
 
+    // シャドウ一致判定：現在の口の形が撮影時の形に近いか
+    this.shadowMatch =
+      this.hasShadow &&
+      hasFace &&
+      this.shadowOpen != null &&
+      Math.abs(this.openness - this.shadowOpen) <= MATCH_TOL_OPEN &&
+      Math.abs(this.spread - this.shadowSpread) <= MATCH_TOL_SPREAD;
+
     const ctx = this.ctx;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, INTERNAL_W, INTERNAL_H);
@@ -261,6 +300,7 @@ export class MouthEngine {
       }
       if (this.settings.showLandmarks) this._drawLandmarks(ctx); // 口角点・唇輪郭
       this._drawOverlays(ctx); // 手書き＆スタンプの目標
+      if (this.shadowMatch) this._drawMatchFeedback(ctx); // ぴったり！
     } else {
       this._drawRawCover(ctx); // まだ顔ロック前：素の映像を表示
     }
@@ -274,6 +314,7 @@ export class MouthEngine {
         reachedSpread: this.reachedSpread,
         reached: this.reached,
         reps: this.reps,
+        shadowMatch: this.shadowMatch,
         hasFace,
       });
     }
@@ -364,7 +405,17 @@ export class MouthEngine {
     ctx.scale(mirror ? -scale : scale, scale);
     if (level) ctx.rotate(-sm.angle);
     ctx.translate(-sm.cx, -sm.cy);
-    ctx.drawImage(this.video, 0, 0, this.video.videoWidth, this.video.videoHeight);
+    // 解析に使ったのと同じ固定フレームを描画（点・輪郭とズレない）
+    ctx.drawImage(this.frameCanvas, 0, 0);
+    ctx.restore();
+  }
+
+  // シャドウに「ぴったり」合った時のフィードバック（緑の枠）
+  _drawMatchFeedback(ctx) {
+    ctx.save();
+    ctx.strokeStyle = "rgba(54, 198, 160, 0.95)";
+    ctx.lineWidth = 12;
+    ctx.strokeRect(6, 6, INTERNAL_W - 12, INTERNAL_H - 12);
     ctx.restore();
   }
 
@@ -429,13 +480,14 @@ export class MouthEngine {
   // 顔ロック前の素の映像（cover）
   _drawRawCover(ctx) {
     const v = this.video;
+    if (!v.videoWidth) return;
     const s = Math.max(INTERNAL_W / v.videoWidth, INTERNAL_H / v.videoHeight);
     const dw = v.videoWidth * s;
     const dh = v.videoHeight * s;
     ctx.save();
     ctx.translate(INTERNAL_W / 2, INTERNAL_H / 2);
     ctx.scale(this.settings.mirror ? -1 : 1, 1);
-    ctx.drawImage(v, -dw / 2, -dh / 2, dw, dh);
+    ctx.drawImage(this.frameCanvas, -dw / 2, -dh / 2, dw, dh);
     ctx.restore();
   }
 
