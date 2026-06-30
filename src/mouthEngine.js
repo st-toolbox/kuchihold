@@ -215,6 +215,18 @@ export class MouthEngine {
     this._openState = "closed";
   }
 
+  // 目印を含まない、安定化済みの口元クロップを返す（舌の判定用の入力画像）
+  snapshotCrop() {
+    if (!this.sm) return null;
+    const c = this._cropCanvas || (this._cropCanvas = document.createElement("canvas"));
+    c.width = INTERNAL_W;
+    c.height = INTERNAL_H;
+    const cx = c.getContext("2d");
+    cx.clearRect(0, 0, INTERNAL_W, INTERNAL_H);
+    this._drawVideoCrop(cx);
+    return c;
+  }
+
   // 口角タップ位置合わせ開始（左→右の順にタップしてもらう）
   startCalibration() {
     this._calib = { step: 0, deltas: [] };

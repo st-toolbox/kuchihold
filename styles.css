@@ -614,6 +614,29 @@ canvas.mouth {
 .train-meter .meter {
   flex: 1;
 }
+.train-tongue {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(0, 0, 0, 0.45);
+  border-radius: 10px;
+  padding: 8px 12px;
+}
+.train-tongue b {
+  font-size: 20px;
+}
+.train-tongue .now {
+  margin-left: auto;
+  color: var(--muted);
+}
+.train-tongue.hit {
+  background: rgba(54, 198, 160, 0.85);
+  color: #06231c;
+}
+.train-tongue.hit .now,
+.train-tongue.hit .muted {
+  color: #06231c;
+}
 .train-reps {
   position: absolute;
   top: 8px;

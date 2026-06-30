@@ -2,11 +2,22 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import { html } from "./html.js?v=11";
 import { MouthEngine } from "./mouthEngine.js?v=11";
 import * as store from "./store.js?v=11";
+import * as tongue from "./tongueClassifier.js?v=11";
 
 const OPEN_SCALE = 0.6; // 縦（あ）メーターの表示上限
 const SPREAD_SCALE = 0.8; // 横（い）メーターの表示上限
 const reachedStyle = { color: "#06231c", background: "#36c6a0", borderColor: "#36c6a0" };
-const APP_VERSION = "v16";
+const APP_VERSION = "v17";
+
+const TONGUE_CLASSES = [
+  { id: "neutral", label: "中立" },
+  { id: "out", label: "出す" },
+  { id: "left", label: "左" },
+  { id: "right", label: "右" },
+  { id: "up", label: "上" },
+  { id: "down", label: "下" },
+];
+const tongueLabelOf = (id) => (TONGUE_CLASSES.find((c) => c.id === id) || {}).label || id;
 
 const DEFAULT_SETTINGS = {
   mirror: true,
@@ -22,6 +33,7 @@ const SETUP_TABS = [
   { id: "setup", label: "初期設定" },
   { id: "patient", label: "患者" },
   { id: "target", label: "目標" },
+  { id: "tongue", label: "舌" },
   { id: "rhythm", label: "リズム" },
   { id: "view", label: "詳細" },
 ];
@@ -76,6 +88,15 @@ export function App() {
 
   const [slots, setSlots] = useState(store.getSlots());
   const [sessionActive, setSessionActive] = useState(false);
+
+  // 舌（見本登録方式）
+  const [tongueLoaded, setTongueLoaded] = useState(false);
+  const [tongueLoading, setTongueLoading] = useState(false);
+  const [tongueTarget, setTongueTarget] = useState(null); // class id or null
+  const [tongueLabel, setTongueLabel] = useState(null); // 現在の判定
+  const [tongueCounts, setTongueCounts] = useState({});
+  const [tongueReps, setTongueReps] = useState(0);
+  const tongueArmRef = useRef(true);
 
   // ---- 起動 ----------------------------------------------------------------
   useEffect(() => {
@@ -172,6 +193,82 @@ export function App() {
     return () => clearInterval(id);
   }, [rhythmOn, bpm, playClick]);
 
+  // ---- 舌：モデル読込・登録・判定ループ ------------------------------------
+  const ensureTongue = useCallback(() => {
+    if (tongue.tongueReady()) {
+      setTongueLoaded(true);
+      return;
+    }
+    setTongueLoading(true);
+    tongue
+      .loadTongue()
+      .then(() => {
+        setTongueLoaded(true);
+        setTongueLoading(false);
+      })
+      .catch((e) => {
+        setTongueLoading(false);
+        setError(e.message);
+      });
+  }, []);
+
+  const addTongueSample = useCallback((classId) => {
+    const crop = engineRef.current && engineRef.current.snapshotCrop();
+    if (!crop) {
+      setError("顔（口元）が検出されてから登録してください。");
+      return;
+    }
+    tongue.addTongueExample(crop, classId);
+    setTongueCounts({ ...tongue.tongueCounts() });
+  }, []);
+
+  const resetTongue = useCallback(() => {
+    tongue.resetTongue();
+    setTongueCounts({});
+    setTongueLabel(null);
+  }, []);
+
+  // 判定ループ：舌タブ表示中、または訓練中に舌目標があるとき
+  useEffect(() => {
+    const active =
+      tongueLoaded && ((mode === "setup" && tab === "tongue") || (mode === "train" && tongueTarget));
+    if (!active) return;
+    let alive = true;
+    const tick = async () => {
+      const crop = engineRef.current && engineRef.current.snapshotCrop();
+      if (crop) {
+        try {
+          const res = await tongue.classifyTongue(crop);
+          if (alive && res) {
+            setTongueLabel(res.label);
+            // 訓練中の反復カウント：目標状態に到達→中立へ戻る→到達 で +1
+            if (mode === "train" && tongueTarget) {
+              if (res.label === tongueTarget && tongueArmRef.current) {
+                tongueArmRef.current = false;
+                setTongueReps((n) => n + 1);
+              } else if (res.label === "neutral") {
+                tongueArmRef.current = true;
+              }
+            }
+          }
+        } catch {
+          /* 判定失敗は無視 */
+        }
+      }
+      if (alive) id = setTimeout(tick, 140);
+    };
+    let id = setTimeout(tick, 140);
+    return () => {
+      alive = false;
+      clearTimeout(id);
+    };
+  }, [tongueLoaded, mode, tab, tongueTarget]);
+
+  // 舌目標が設定されたらモデルを用意（設定・訓練どちらでも）
+  useEffect(() => {
+    if (tongueTarget && !tongueLoaded) ensureTongue();
+  }, [tongueTarget, tongueLoaded, ensureTongue]);
+
   // ---- 操作ハンドラ --------------------------------------------------------
   const eng = () => engineRef.current;
   const startCalib = useCallback(() => {
@@ -194,6 +291,8 @@ export function App() {
 
   const startSession = useCallback(() => {
     eng().resetReps();
+    setTongueReps(0);
+    tongueArmRef.current = true;
     sessionStartRef.current = performance.now();
     setSessionActive(true);
     setMetrics({ ...metricsRef.current, reps: 0 });
@@ -208,6 +307,7 @@ export function App() {
     openTarget,
     spreadTarget,
     bpm,
+    tongueTarget,
     settings: { ...settings },
   });
   const applyConfig = (cfg) => {
@@ -215,6 +315,7 @@ export function App() {
     setOpenTarget(cfg.openTarget ?? null);
     setSpreadTarget(cfg.spreadTarget ?? null);
     setBpm(cfg.bpm ?? 60);
+    setTongueTarget(cfg.tongueTarget ?? null);
     setSettings((s) => ({ ...s, ...(cfg.settings || {}) }));
   };
 
@@ -229,6 +330,8 @@ export function App() {
     calib, startCalib,
     slots, currentConfig, applyConfig,
     setError,
+    tongueLoaded, tongueLoading, ensureTongue, addTongueSample, resetTongue,
+    tongueCounts, tongueLabel, tongueTarget, setTongueTarget,
   };
   const tabs = SETUP_TABS;
   const effTab = tabs.some((t) => t.id === tab) ? tab : tabs[0].id;
@@ -237,6 +340,7 @@ export function App() {
       case "setup": return html`<${SetupCard} ...${common} />`;
       case "patient": return html`<${PatientCard} ...${common} />`;
       case "target": return html`<${TargetCard} ...${common} />`;
+      case "tongue": return html`<${TongueCard} ...${common} />`;
       case "rhythm": return html`<${RhythmCard} ...${common} />`;
       case "view": return html`<${ViewCard} ...${common} />`;
       default: return null;
@@ -284,6 +388,9 @@ export function App() {
           sessionActive=${sessionActive}
           startSession=${startSession}
           endSession=${endSession}
+          tongueTarget=${tongueTarget}
+          tongueLabel=${tongueLabel}
+          tongueReps=${tongueReps}
         />
 
         ${mode === "setup" &&
@@ -299,6 +406,7 @@ function Stage(props) {
     canvasRef, ready, metrics, mode, calib, onSkip,
     rhythmOn, rhythmPhase, openTarget, spreadTarget, reached,
     sessionActive, startSession, endSession,
+    tongueTarget, tongueLabel, tongueReps,
   } = props;
   const statusText = !ready
     ? "カメラを準備しています…"
@@ -334,6 +442,7 @@ function Stage(props) {
         html`<${TrainOverlay}
           metrics=${metrics} openTarget=${openTarget} spreadTarget=${spreadTarget}
           sessionActive=${sessionActive} startSession=${startSession} endSession=${endSession}
+          tongueTarget=${tongueTarget} tongueLabel=${tongueLabel} tongueReps=${tongueReps}
         />`}
       </div>
     </div>
@@ -341,23 +450,38 @@ function Stage(props) {
 }
 
 // ---- 訓練オーバーレイ（カメラ上に大きく表示）------------------------------
-function TrainOverlay({ metrics, openTarget, spreadTarget, sessionActive, startSession, endSession }) {
-  const hasTarget = openTarget != null || spreadTarget != null;
+function TrainOverlay(props) {
+  const {
+    metrics, openTarget, spreadTarget, sessionActive, startSession, endSession,
+    tongueTarget, tongueLabel, tongueReps,
+  } = props;
+  const tongueMode = tongueTarget != null;
+  const hasTarget = tongueMode || openTarget != null || spreadTarget != null;
+  const reps = tongueMode ? tongueReps : metrics.reps;
+  const tongueHit = tongueMode && tongueLabel === tongueTarget;
+
   return html`
     <div className="train-overlay">
       <div className="train-top">
-        ${openTarget != null &&
-        html`<div className="train-meter">
-          <span>あ</span><${Meter} value=${metrics.openness} target=${openTarget} scale=${OPEN_SCALE} reached=${metrics.reachedOpen} />
-        </div>`}
-        ${spreadTarget != null &&
-        html`<div className="train-meter">
-          <span>い</span><${Meter} value=${metrics.spread} target=${spreadTarget} scale=${SPREAD_SCALE} reached=${metrics.reachedSpread} />
-        </div>`}
+        ${tongueMode
+          ? html`<div className=${"train-tongue" + (tongueHit ? " hit" : "")}>
+              <span className="muted">舌の目標</span>
+              <b>${tongueLabelOf(tongueTarget)}</b>
+              <span className="now">今: ${tongueLabel ? tongueLabelOf(tongueLabel) : "—"}</span>
+            </div>`
+          : html`
+            ${openTarget != null &&
+            html`<div className="train-meter">
+              <span>あ</span><${Meter} value=${metrics.openness} target=${openTarget} scale=${OPEN_SCALE} reached=${metrics.reachedOpen} />
+            </div>`}
+            ${spreadTarget != null &&
+            html`<div className="train-meter">
+              <span>い</span><${Meter} value=${metrics.spread} target=${spreadTarget} scale=${SPREAD_SCALE} reached=${metrics.reachedSpread} />
+            </div>`}`}
       </div>
 
       <div className="train-reps">
-        <div className="num">${metrics.reps}</div>
+        <div className="num">${reps}</div>
         <div className="lbl">回</div>
       </div>
 
@@ -368,7 +492,7 @@ function TrainOverlay({ metrics, openTarget, spreadTarget, sessionActive, startS
       </div>
 
       ${!hasTarget &&
-      html`<div className="train-hint">「設定」→「目標」で目標を設定すると、ここに表示されます。</div>`}
+      html`<div className="train-hint">「設定」で目標（口唇 or 舌）を設定すると、ここに表示されます。</div>`}
     </div>
   `;
 }
@@ -526,6 +650,75 @@ function RhythmCard({ bpm, setBpm, rhythmOn, setRhythmOn }) {
             onChange=${(e) => setBpm(+e.target.value)} />
         </label>
         <p className="hint">「訓練」画面でも、このリズムが合図として表示されます。</p>
+      </div>
+    </div>
+  `;
+}
+
+// ---- 舌（見本登録方式）----------------------------------------------------
+function TongueCard(props) {
+  const {
+    tongueLoaded, tongueLoading, ensureTongue, addTongueSample, resetTongue,
+    tongueCounts, tongueLabel, tongueTarget, setTongueTarget,
+  } = props;
+  const [sel, setSel] = useState("out");
+
+  useEffect(() => {
+    ensureTongue();
+  }, [ensureTongue]);
+
+  if (!tongueLoaded) {
+    return html`
+      <div className="side">
+        <div className="card">
+          <h3>舌の運動（見本登録方式）</h3>
+          <p className="hint">
+            AIモデルを読み込んでいます…（初回のみ少し時間がかかります）。端末内で動作し、映像は送信されません。
+          </p>
+          <div className="muted small">${tongueLoading ? "読み込み中…" : "準備中…"}</div>
+        </div>
+      </div>
+    `;
+  }
+
+  const totalForSel = tongueCounts[sel] || 0;
+  return html`
+    <div className="side">
+      <div className="card">
+        <h3>① 舌の見本を登録</h3>
+        <p className="hint">
+          状態を選び、その舌の形を作って「登録」を数回（5回以上目安）。<b>中立</b>も必ず登録してください。
+        </p>
+        <div className="grid-tools" style=${{ gridTemplateColumns: "repeat(3,1fr)" }}>
+          ${TONGUE_CLASSES.map(
+            (c) => html`<button key=${c.id} className=${sel === c.id ? "active" : ""}
+              onClick=${() => setSel(c.id)}>
+              ${c.label}<br /><span className="muted small">${tongueCounts[c.id] || 0}</span>
+            </button>`
+          )}
+        </div>
+        <button className="primary" style=${{ width: "100%", marginTop: 10 }}
+          onClick=${() => addTongueSample(sel)}>
+          「${tongueLabelOf(sel)}」を登録（現在 ${totalForSel}）
+        </button>
+        <div className="row between small" style=${{ marginTop: 8 }}>
+          <span className="muted">今の判定：<b>${tongueLabel ? tongueLabelOf(tongueLabel) : "—"}</b></span>
+          <button className="ghost small danger" onClick=${resetTongue}>全消去</button>
+        </div>
+      </div>
+
+      <div className="card">
+        <h3>② 目標の状態</h3>
+        <p className="hint">訓練で数えたい舌の状態を選びます。到達→中立→到達 で1回。</p>
+        <div className="grid-tools" style=${{ gridTemplateColumns: "repeat(3,1fr)" }}>
+          ${TONGUE_CLASSES.filter((c) => c.id !== "neutral").map(
+            (c) => html`<button key=${c.id} className=${tongueTarget === c.id ? "active" : ""}
+              onClick=${() => setTongueTarget(tongueTarget === c.id ? null : c.id)}>${c.label}</button>`
+          )}
+        </div>
+        <div className="muted small" style=${{ marginTop: 8 }}>
+          現在の目標：${tongueTarget ? tongueLabelOf(tongueTarget) : "なし（口唇の目標を使用）"}
+        </div>
       </div>
     </div>
   `;
