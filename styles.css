@@ -131,43 +131,65 @@ textarea {
   min-height: 0;
 }
 @media (max-width: 1000px) {
-  /* モバイル：縦に積んで全体をスクロール。操作パネルに必ず手が届くようにする。
-     並び順は 練習画面 → 操作パネル → 患者パネル。 */
-  html,
-  body,
-  #root {
-    height: auto;
-    min-height: 100%;
-  }
-  .app {
-    height: auto;
-    min-height: 100%;
-  }
-  .layout {
+  /* モバイル：動画を上に固定し、下のタブで操作パネルを切替（スクロールを最小化）。 */
+  .layout.mobile {
     display: flex;
     flex-direction: column;
+    min-height: 0;
   }
   .stage {
-    order: 1;
-    height: auto;
-    padding: 10px;
-  }
-  .side.right {
-    order: 2;
-  }
-  .side:not(.right) {
-    order: 3;
-  }
-  .side {
-    overflow: visible;
-    border: none;
-    border-top: 1px solid var(--line);
+    flex: 0 0 auto;
+    height: 42vh;
+    padding: 8px;
   }
   canvas.mouth {
     width: auto;
-    height: 60vh;
+    height: 100%;
     max-width: 100%;
   }
+  .tabbar {
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    padding: 8px;
+    background: var(--panel);
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+    flex: 0 0 auto;
+  }
+  .tabbar button {
+    white-space: nowrap;
+    padding: 8px 14px;
+  }
+  .tabbar button.active {
+    border-color: var(--accent);
+    background: #14352d;
+  }
+  .mobile-panel {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 10px;
+    -webkit-overflow-scrolling: touch;
+  }
+  .mobile-panel .side {
+    border: none;
+    border-left: none;
+    padding: 0;
+    overflow: visible;
+  }
+}
+
+/* 点・輪郭のずれ補正の方向パッド */
+.nudge {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+.nudge button {
+  min-width: 44px;
 }
 
 .side {

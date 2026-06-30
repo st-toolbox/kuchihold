@@ -28,6 +28,8 @@ const DEFAULTS = {
   smoothing: 0.6, // 固定の安定度。大きいほど静止時のジッターを抑える（動きの遅れは出にくい）
   shadowAlpha: 0.4,
   showLandmarks: true, // 口角の点・唇の輪郭線を表示
+  lmOffX: 0, // 点・輪郭の手動ずれ補正（出力px）
+  lmOffY: 0,
 };
 
 export class MouthEngine {
@@ -438,8 +440,8 @@ export class MouthEngine {
       dy = ry;
     }
     return [
-      INTERNAL_W / 2 + (mirror ? -scale : scale) * dx,
-      INTERNAL_H / 2 + scale * dy,
+      INTERNAL_W / 2 + (mirror ? -scale : scale) * dx + (this.settings.lmOffX || 0),
+      INTERNAL_H / 2 + scale * dy + (this.settings.lmOffY || 0),
     ];
   }
 

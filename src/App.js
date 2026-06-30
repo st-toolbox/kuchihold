@@ -14,6 +14,40 @@ function mmText(rel, mmPerRel) {
   return `約${Math.round(rel * mmPerRel)}mm`;
 }
 
+function clampNum(v, lo, hi) {
+  return Math.min(hi, Math.max(lo, v));
+}
+
+// 画面幅でモバイル判定（スマホ縦持ちでタブUIに切替）
+function useIsMobile() {
+  const q = "(max-width: 1000px)";
+  const [m, setM] = useState(() =>
+    typeof window !== "undefined" && window.matchMedia
+      ? window.matchMedia(q).matches
+      : false
+  );
+  useEffect(() => {
+    const mq = window.matchMedia(q);
+    const fn = (e) => setM(e.matches);
+    mq.addEventListener("change", fn);
+    return () => mq.removeEventListener("change", fn);
+  }, []);
+  return m;
+}
+
+const ST_TABS = [
+  { id: "draw", label: "描く" },
+  { id: "target", label: "目標" },
+  { id: "shadow", label: "シャドウ" },
+  { id: "view", label: "表示" },
+  { id: "save", label: "保存" },
+  { id: "patient", label: "患者" },
+];
+const SELF_TABS = [
+  { id: "practice", label: "練習" },
+  { id: "patient", label: "患者" },
+];
+
 export function App() {
   const canvasRef = useRef(null);
   const engineRef = useRef(null);
@@ -53,6 +87,8 @@ export function App() {
     smoothing: 0.6,
     shadowAlpha: 0.4,
     showLandmarks: true,
+    lmOffX: 0,
+    lmOffY: 0,
   });
   const [hasShadow, setHasShadow] = useState(false);
 
@@ -176,6 +212,41 @@ export function App() {
   );
 
   const activePatient = activeId ? store.getPatient(activeId) : null;
+  const isMobile = useIsMobile();
+  const [tab, setTab] = useState("draw");
+
+  // パネルへ渡すまとめ（デスクトップ／モバイル共通で使用）
+  const toolProps = {
+    tool, setTool, stampType, setStampType, color, setColor,
+    penSize, setPenSize, stampSize, setStampSize,
+    settings, setSettings,
+    openTarget, setOpenTarget, setOpenFromCurrent,
+    spreadTarget, setSpreadTarget, setSpreadFromCurrent,
+    metrics, hasShadow, captureShadow, clearShadow,
+    engine: eng, savePreset, hasPatient: !!activeId,
+  };
+  const patientProps = { patients, activeId, setActiveId, activePatient, loadPreset, mode, setError };
+  const practiceProps = {
+    metrics, openTarget, spreadTarget, startSession, endSession,
+    hasPatient: !!activeId, sessionActive: sessionStartRef.current != null,
+  };
+
+  const tabs = mode === "st" ? ST_TABS : SELF_TABS;
+  const effTab = tabs.some((t) => t.id === tab) ? tab : tabs[0].id;
+  const renderSection = (id) => {
+    switch (id) {
+      case "draw": return html`<${DrawCard} ...${toolProps} />`;
+      case "target": return html`<${TargetCard} ...${toolProps} />`;
+      case "shadow": return html`<${ShadowCard} ...${toolProps} />`;
+      case "view": return html`<${ViewCard} ...${toolProps} />`;
+      case "save": return html`<${SaveCard} ...${toolProps} />`;
+      case "practice": return html`<${PracticePanel} ...${practiceProps} />`;
+      case "patient": return html`<${PatientPanel} ...${patientProps} />`;
+      default: return null;
+    }
+  };
+
+  const stage = html`<${Stage} canvasRef=${canvasRef} metrics=${metrics} openTarget=${openTarget} ready=${ready} />`;
 
   // ---- 描画 ----------------------------------------------------------------
   return html`
@@ -206,47 +277,29 @@ export function App() {
         ⚠️ ${error} <button className="ghost small" onClick=${() => setError(null)}>閉じる</button>
       </div>`}
 
-      <div className="layout">
-        <${PatientPanel}
-          patients=${patients}
-          activeId=${activeId}
-          setActiveId=${setActiveId}
-          activePatient=${activePatient}
-          loadPreset=${loadPreset}
-          mode=${mode}
-          setError=${setError}
-        />
-
-        <${Stage} canvasRef=${canvasRef} metrics=${metrics} openTarget=${openTarget} ready=${ready} />
-
-        ${mode === "st"
-          ? html`<${ToolPanel}
-              tool=${tool} setTool=${setTool}
-              stampType=${stampType} setStampType=${setStampType}
-              color=${color} setColor=${setColor}
-              penSize=${penSize} setPenSize=${setPenSize}
-              stampSize=${stampSize} setStampSize=${setStampSize}
-              settings=${settings} setSettings=${setSettings}
-              openTarget=${openTarget} setOpenTarget=${setOpenTarget}
-              spreadTarget=${spreadTarget} setSpreadTarget=${setSpreadTarget}
-              setOpenFromCurrent=${setOpenFromCurrent}
-              setSpreadFromCurrent=${setSpreadFromCurrent}
-              metrics=${metrics}
-              hasShadow=${hasShadow} captureShadow=${captureShadow} clearShadow=${clearShadow}
-              engine=${eng}
-              savePreset=${savePreset}
-              hasPatient=${!!activeId}
-            />`
-          : html`<${PracticePanel}
-              metrics=${metrics}
-              openTarget=${openTarget}
-              spreadTarget=${spreadTarget}
-              startSession=${startSession}
-              endSession=${endSession}
-              hasPatient=${!!activeId}
-              sessionActive=${sessionStartRef.current != null}
-            />`}
-      </div>
+      ${isMobile
+        ? html`
+            <div className="layout mobile">
+              ${stage}
+              <div className="tabbar">
+                ${tabs.map(
+                  (tb) => html`<button key=${tb.id}
+                    className=${effTab === tb.id ? "active" : ""}
+                    onClick=${() => setTab(tb.id)}>${tb.label}</button>`
+                )}
+              </div>
+              <div className="mobile-panel">${renderSection(effTab)}</div>
+            </div>
+          `
+        : html`
+            <div className="layout">
+              <${PatientPanel} ...${patientProps} />
+              ${stage}
+              ${mode === "st"
+                ? html`<${ToolPanel} ...${toolProps} />`
+                : html`<${PracticePanel} ...${practiceProps} />`}
+            </div>
+          `}
     </div>
   `;
 }
@@ -378,166 +431,186 @@ function PatientPanel({ patients, activeId, setActiveId, activePatient, loadPres
   `;
 }
 
-// ---- 右：ST 指導ツール -----------------------------------------------------
-function ToolPanel(props) {
+// ---- 右：ST 指導ツール（カードを分割してタブ化にも使えるようにする）---------
+function DrawCard(props) {
   const {
     tool, setTool, stampType, setStampType, color, setColor,
-    penSize, setPenSize, stampSize, setStampSize,
-    settings, setSettings,
-    openTarget, setOpenTarget, setOpenFromCurrent,
-    spreadTarget, setSpreadTarget, setSpreadFromCurrent,
-    metrics,
-    hasShadow, captureShadow, clearShadow, engine, savePreset, hasPatient,
+    penSize, setPenSize, stampSize, setStampSize, engine,
   } = props;
-  const [presetName, setPresetName] = useState("");
+  return html`
+    <div className="card">
+      <h3>目標を描く</h3>
+      <div className="grid-tools">
+        <button className=${tool === "pen" ? "active" : ""} onClick=${() => setTool("pen")}>✏️ ペン</button>
+        <button className=${tool === "stamp" ? "active" : ""} onClick=${() => setTool("stamp")}>⭐ スタンプ</button>
+        <button className=${tool === "erase" ? "active" : ""} onClick=${() => setTool("erase")}>🩹 消しゴム</button>
+        <button onClick=${() => engine().undo()}>↩︎ 一つ戻す</button>
+      </div>
+      <div className="swatches" style=${{ marginTop: 10 }}>
+        ${COLORS.map(
+          (c) => html`<div key=${c} className=${"swatch" + (c === color ? " active" : "")}
+            style=${{ background: c }} onClick=${() => setColor(c)}></div>`
+        )}
+      </div>
+      ${tool === "pen" &&
+      html`<label className="field" style=${{ marginTop: 10 }}>
+        線の太さ ${penSize}px
+        <input type="range" min="2" max="24" value=${penSize} onChange=${(e) => setPenSize(+e.target.value)} />
+      </label>`}
+      ${tool === "stamp" &&
+      html`<div style=${{ marginTop: 10 }}>
+        <label className="field">スタンプ
+          <select value=${stampType} onChange=${(e) => setStampType(e.target.value)}>
+            ${STAMP_TYPES.map((s) => html`<option key=${s.type} value=${s.type}>${s.label}</option>`)}
+          </select>
+        </label>
+        <label className="field" style=${{ marginTop: 8 }}>大きさ ${stampSize}px
+          <input type="range" min="30" max="240" value=${stampSize} onChange=${(e) => setStampSize(+e.target.value)} />
+        </label>
+      </div>`}
+      <div className="row" style=${{ marginTop: 10 }}>
+        <button className="ghost small" onClick=${() => engine().clearOverlays()}>すべて消去</button>
+      </div>
+    </div>
+  `;
+}
 
+function ShadowCard(props) {
+  const { settings, setSettings, metrics, hasShadow, captureShadow, clearShadow } = props;
   const set = (patch) => setSettings((s) => ({ ...s, ...patch }));
+  return html`
+    <div className="card">
+      <h3>
+        シャドウ目標（目標の口形）
+        ${hasShadow &&
+        html`<span className="badge" style=${{ marginLeft: 8, ...(metrics.shadowMatch ? reachedStyle : {}) }}>
+          ${metrics.shadowMatch ? "ぴったり" : "ずれ"}
+        </span>`}
+      </h3>
+      <p className="hint">
+        患者が目標の形まで口を動かせた瞬間に撮影すると、その口形が半透明で重なり、
+        次回からの目標になります。撮影時の形に近づくと画面が緑枠で「ぴったり！」と知らせます。
+      </p>
+      <div className="row wrap">
+        <button className="primary" onClick=${captureShadow}>📸 今の口元を目標に</button>
+        <button className="ghost" onClick=${clearShadow} disabled=${!hasShadow}>消去</button>
+      </div>
+      <label className="field" style=${{ marginTop: 10 }}>
+        目標の濃さ ${Math.round(settings.shadowAlpha * 100)}%
+        <input type="range" min="10" max="80" value=${Math.round(settings.shadowAlpha * 100)}
+          onChange=${(e) => set({ shadowAlpha: +e.target.value / 100 })} />
+      </label>
+    </div>
+  `;
+}
 
+function TargetCard(props) {
+  const {
+    metrics, openTarget, setOpenTarget, setOpenFromCurrent,
+    spreadTarget, setSpreadTarget, setSpreadFromCurrent,
+  } = props;
+  return html`
+    <div className="card">
+      <h3>運動の目標（あ＝縦 / い＝横）</h3>
+      <p className="hint">
+        患者に目標の形まで動かしてもらい、その瞬間にボタンを押すと目標値になります。
+        縦・横は別々に設定でき、両方設定すると「両方同時に達成」で1回とカウントします。
+      </p>
+      <div style=${{ marginTop: 6 }}>
+        <div className="row between small"><span>あ（縦の開き）</span>
+          <span className="muted">今: ${mmText(metrics.openness, metrics.mmPerRel)} / 目標: ${mmText(openTarget, metrics.mmPerRel)}</span>
+        </div>
+        <${Meter} value=${metrics.openness} target=${openTarget} scale=${OPEN_SCALE} reached=${metrics.reachedOpen} />
+        <div className="row wrap" style=${{ marginTop: 6 }}>
+          <button onClick=${setOpenFromCurrent}>今の縦を目標に</button>
+          <button className="ghost" onClick=${() => setOpenTarget(null)} disabled=${openTarget == null}>解除</button>
+        </div>
+      </div>
+      <div style=${{ marginTop: 12 }}>
+        <div className="row between small"><span>い（横の広がり）</span>
+          <span className="muted">今: ${mmText(metrics.spread, metrics.mmPerRel)} / 目標: ${mmText(spreadTarget, metrics.mmPerRel)}</span>
+        </div>
+        <${Meter} value=${metrics.spread} target=${spreadTarget} scale=${SPREAD_SCALE} reached=${metrics.reachedSpread} />
+        <div className="row wrap" style=${{ marginTop: 6 }}>
+          <button onClick=${setSpreadFromCurrent}>今の横を目標に</button>
+          <button className="ghost" onClick=${() => setSpreadTarget(null)} disabled=${spreadTarget == null}>解除</button>
+        </div>
+      </div>
+      <p className="hint" style=${{ marginTop: 10 }}>
+        mm は平均的な目の寸法（片目幅28.5mm・目頭間32mm）を基準にした<b>概算（推定値）</b>です。正面で計測してください。
+      </p>
+    </div>
+  `;
+}
+
+function ViewCard(props) {
+  const { settings, setSettings } = props;
+  const set = (patch) => setSettings((s) => ({ ...s, ...patch }));
+  const nudge = (dx, dy) => set({ lmOffX: clampNum((settings.lmOffX || 0) + dx, -40, 40), lmOffY: clampNum((settings.lmOffY || 0) + dy, -40, 40) });
+  return html`
+    <div className="card">
+      <h3>映像の安定化・表示</h3>
+      <div className="row wrap">
+        <button className=${settings.mirror ? "active" : ""} onClick=${() => set({ mirror: !settings.mirror })}>鏡表示</button>
+        <button className=${settings.level ? "active" : ""} onClick=${() => set({ level: !settings.level })}>傾き補正</button>
+        <button className=${settings.showLandmarks ? "active" : ""} onClick=${() => set({ showLandmarks: !settings.showLandmarks })}>口元の輪郭</button>
+      </div>
+      <label className="field" style=${{ marginTop: 10 }}>
+        ズーム（小さいほど寄り／大きいほど引き）
+        <input type="range" min="1" max="3.5" step="0.1" value=${settings.zoom}
+          onChange=${(e) => set({ zoom: +e.target.value })} />
+      </label>
+      <label className="field">
+        口元の固定の強さ ${Math.round(settings.smoothing * 100)}
+        <input type="range" min="20" max="95" value=${Math.round(settings.smoothing * 100)}
+          onChange=${(e) => set({ smoothing: +e.target.value / 100 })} />
+      </label>
+
+      <div style=${{ marginTop: 12 }}>
+        <div className="row between small">
+          <span>点・輪郭のずれ補正</span>
+          <span className="muted">X ${settings.lmOffX || 0} / Y ${settings.lmOffY || 0}px</span>
+        </div>
+        <div className="nudge">
+          <button onClick=${() => nudge(0, -2)}>▲</button>
+          <div className="row" style=${{ gap: 6 }}>
+            <button onClick=${() => nudge(-2, 0)}>◀</button>
+            <button className="ghost small" onClick=${() => set({ lmOffX: 0, lmOffY: 0 })}>リセット</button>
+            <button onClick=${() => nudge(2, 0)}>▶</button>
+          </div>
+          <button onClick=${() => nudge(0, 2)}>▼</button>
+        </div>
+        <p className="hint">点や輪郭が口元から少しずれて見える場合に、矢印で位置を微調整できます。</p>
+      </div>
+    </div>
+  `;
+}
+
+function SaveCard(props) {
+  const { savePreset, hasPatient } = props;
+  const [presetName, setPresetName] = useState("");
+  return html`
+    <div className="card">
+      <h3>この目標を保存</h3>
+      <div className="row">
+        <input placeholder="目標名 例: 口角を上げる" value=${presetName}
+          onChange=${(e) => setPresetName(e.target.value)} style=${{ flex: 1 }} />
+        <button className="primary" disabled=${!hasPatient}
+          onClick=${() => { savePreset(presetName || "目標"); setPresetName(""); }}>保存</button>
+      </div>
+      ${!hasPatient && html`<p className="hint">保存には患者（管理番号）の選択が必要です。</p>`}
+    </div>
+  `;
+}
+
+function ToolPanel(props) {
   return html`
     <div className="side right">
-      <div className="card">
-        <h3>目標を描く</h3>
-        <div className="grid-tools">
-          <button className=${tool === "pen" ? "active" : ""} onClick=${() => setTool("pen")}>✏️ ペン</button>
-          <button className=${tool === "stamp" ? "active" : ""} onClick=${() => setTool("stamp")}>⭐ スタンプ</button>
-          <button className=${tool === "erase" ? "active" : ""} onClick=${() => setTool("erase")}>🩹 消しゴム</button>
-          <button onClick=${() => engine().undo()}>↩︎ 一つ戻す</button>
-        </div>
-        <div className="swatches" style=${{ marginTop: 10 }}>
-          ${COLORS.map(
-            (c) => html`<div
-              key=${c}
-              className=${"swatch" + (c === color ? " active" : "")}
-              style=${{ background: c }}
-              onClick=${() => setColor(c)}
-            ></div>`
-          )}
-        </div>
-        ${tool === "pen" &&
-        html`<label className="field" style=${{ marginTop: 10 }}>
-          線の太さ ${penSize}px
-          <input type="range" min="2" max="24" value=${penSize}
-            onChange=${(e) => setPenSize(+e.target.value)} />
-        </label>`}
-        ${tool === "stamp" &&
-        html`<div style=${{ marginTop: 10 }}>
-          <label className="field">
-            スタンプ
-            <select value=${stampType} onChange=${(e) => setStampType(e.target.value)}>
-              ${STAMP_TYPES.map((s) => html`<option key=${s.type} value=${s.type}>${s.label}</option>`)}
-            </select>
-          </label>
-          <label className="field" style=${{ marginTop: 8 }}>
-            大きさ ${stampSize}px
-            <input type="range" min="30" max="240" value=${stampSize}
-              onChange=${(e) => setStampSize(+e.target.value)} />
-          </label>
-        </div>`}
-        <div className="row" style=${{ marginTop: 10 }}>
-          <button className="ghost small" onClick=${() => engine().clearOverlays()}>すべて消去</button>
-        </div>
-      </div>
-
-      <div className="card">
-        <h3>
-          シャドウ目標（目標の口形）
-          ${hasShadow &&
-          html`<span className="badge" style=${{ marginLeft: 8, ...(metrics.shadowMatch ? reachedStyle : {}) }}>
-            ${metrics.shadowMatch ? "ぴったり" : "ずれ"}
-          </span>`}
-        </h3>
-        <p className="hint">
-          患者が目標の形まで口を動かせた瞬間に撮影すると、その口形が半透明で
-          重なり、次回からの目標になります。撮影時の形に近づくと画面が緑枠で
-          「ぴったり！」と知らせます。
-        </p>
-        <div className="row wrap">
-          <button className="primary" onClick=${captureShadow}>📸 今の口元を目標に</button>
-          <button className="ghost" onClick=${clearShadow} disabled=${!hasShadow}>消去</button>
-        </div>
-        <label className="field" style=${{ marginTop: 10 }}>
-          目標の濃さ ${Math.round(settings.shadowAlpha * 100)}%
-          <input type="range" min="10" max="80" value=${Math.round(settings.shadowAlpha * 100)}
-            onChange=${(e) => set({ shadowAlpha: +e.target.value / 100 })} />
-        </label>
-      </div>
-
-      <div className="card">
-        <h3>運動の目標（あ＝縦 / い＝横）</h3>
-        <p className="hint">
-          患者に目標の形まで動かしてもらい、その瞬間にボタンを押すと目標値になります。
-          縦・横は別々に設定でき、両方設定すると「両方同時に達成」で1回とカウントします。
-        </p>
-
-        <div style=${{ marginTop: 6 }}>
-          <div className="row between small"><span>あ（縦の開き）</span>
-            <span className="muted">今: ${mmText(metrics.openness, metrics.mmPerRel)} / 目標: ${mmText(openTarget, metrics.mmPerRel)}</span>
-          </div>
-          <${Meter} value=${metrics.openness} target=${openTarget} scale=${OPEN_SCALE} reached=${metrics.reachedOpen} />
-          <div className="row wrap" style=${{ marginTop: 6 }}>
-            <button onClick=${setOpenFromCurrent}>今の縦を目標に</button>
-            <button className="ghost" onClick=${() => setOpenTarget(null)} disabled=${openTarget == null}>解除</button>
-          </div>
-        </div>
-
-        <div style=${{ marginTop: 12 }}>
-          <div className="row between small"><span>い（横の広がり）</span>
-            <span className="muted">今: ${mmText(metrics.spread, metrics.mmPerRel)} / 目標: ${mmText(spreadTarget, metrics.mmPerRel)}</span>
-          </div>
-          <${Meter} value=${metrics.spread} target=${spreadTarget} scale=${SPREAD_SCALE} reached=${metrics.reachedSpread} />
-          <div className="row wrap" style=${{ marginTop: 6 }}>
-            <button onClick=${setSpreadFromCurrent}>今の横を目標に</button>
-            <button className="ghost" onClick=${() => setSpreadTarget(null)} disabled=${spreadTarget == null}>解除</button>
-          </div>
-        </div>
-
-        <p className="hint" style=${{ marginTop: 10 }}>
-          mm は平均的な目の寸法（片目幅28.5mm・目頭間32mm）を基準にした<b>概算（推定値）</b>です。
-          正面で計測してください。
-        </p>
-      </div>
-
-      <div className="card">
-        <h3>映像の安定化</h3>
-        <div className="row wrap">
-          <button className=${settings.mirror ? "active" : ""} onClick=${() => set({ mirror: !settings.mirror })}>
-            鏡表示
-          </button>
-          <button className=${settings.level ? "active" : ""} onClick=${() => set({ level: !settings.level })}>
-            傾き補正
-          </button>
-          <button className=${settings.showLandmarks ? "active" : ""} onClick=${() => set({ showLandmarks: !settings.showLandmarks })}>
-            口元の輪郭
-          </button>
-        </div>
-        <label className="field" style=${{ marginTop: 10 }}>
-          ズーム（小さいほど寄り／大きいほど引き）
-          <input type="range" min="1" max="3.5" step="0.1" value=${settings.zoom}
-            onChange=${(e) => set({ zoom: +e.target.value })} />
-        </label>
-        <label className="field">
-          口元の固定の強さ ${Math.round(settings.smoothing * 100)}
-          <input type="range" min="20" max="95" value=${Math.round(settings.smoothing * 100)}
-            onChange=${(e) => set({ smoothing: +e.target.value / 100 })} />
-        </label>
-        <p className="hint">
-          口元が画面の中央に固定され、手ブレや顔の移動があっても止まって見えます。
-          細かく震える場合は数値を上げ、追従が遅いと感じる場合は下げてください。
-        </p>
-      </div>
-
-      <div className="card">
-        <h3>この目標を保存</h3>
-        <div className="row">
-          <input placeholder="目標名 例: 口角を上げる" value=${presetName}
-            onChange=${(e) => setPresetName(e.target.value)} style=${{ flex: 1 }} />
-          <button className="primary" disabled=${!hasPatient}
-            onClick=${() => { savePreset(presetName || "目標"); setPresetName(""); }}>
-            保存
-          </button>
-        </div>
-        ${!hasPatient && html`<p className="hint">保存には患者（管理番号）の選択が必要です。</p>`}
-      </div>
+      <${DrawCard} ...${props} />
+      <${TargetCard} ...${props} />
+      <${ShadowCard} ...${props} />
+      <${ViewCard} ...${props} />
+      <${SaveCard} ...${props} />
     </div>
   `;
 }
