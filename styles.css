@@ -131,7 +131,30 @@ textarea {
   min-height: 0;
 }
 @media (max-width: 1000px) {
-  /* モバイル：動画を上に固定し、下のタブで操作パネルを切替（スクロールを最小化）。 */
+  /* モバイル：動画を上に固定し、下のタブで操作パネルを切替（スクロールを最小化）。
+     スマホのアドレスバーを考慮して dvh（動的ビューポート）で高さを確定し、
+     動画＋タブ＋パネルが必ず画面内に収まるようにする。 */
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  .app {
+    height: 100svh; /* 小さい方のビューポート＝常に見える範囲に収める */
+    height: 100dvh;
+  }
+  .topbar {
+    padding: 8px 12px;
+  }
+  .brand small {
+    display: none; /* 縦持ちでは副題を隠して高さを節約 */
+  }
+  .brand {
+    font-size: 15px;
+  }
+  .mode-switch button {
+    padding: 6px 12px;
+  }
   .layout.mobile {
     display: flex;
     flex-direction: column;
@@ -139,8 +162,8 @@ textarea {
   }
   .stage {
     flex: 0 0 auto;
-    height: 42vh;
-    padding: 8px;
+    height: 38dvh;
+    padding: 6px;
   }
   canvas.mouth {
     width: auto;
@@ -170,6 +193,7 @@ textarea {
     min-height: 0;
     overflow-y: auto;
     padding: 10px;
+    padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
     -webkit-overflow-scrolling: touch;
   }
   .mobile-panel .side {
