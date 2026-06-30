@@ -6,7 +6,7 @@ import * as store from "./store.js?v=11";
 const OPEN_SCALE = 0.6; // 縦（あ）メーターの表示上限
 const SPREAD_SCALE = 0.8; // 横（い）メーターの表示上限
 const reachedStyle = { color: "#06231c", background: "#36c6a0", borderColor: "#36c6a0" };
-const APP_VERSION = "v15";
+const APP_VERSION = "v16";
 
 const DEFAULT_SETTINGS = {
   mirror: true,

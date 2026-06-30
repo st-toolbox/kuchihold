@@ -89,6 +89,8 @@ export class MouthEngine {
     this.spreadTarget = null; // 0..1 or null（横）
     this.openness = 0;
     this.spread = 0;
+    this.baseOpen = null; // 安静時（戻り位置）の自動追従
+    this.baseSpread = null;
     this.mmPerRel = 0; // 相対値1.0あたりの概算mm（片目幅32mm基準）
     this.reachedOpen = false;
     this.reachedSpread = false;
@@ -403,31 +405,39 @@ export class MouthEngine {
     // 軽く平滑化
     this.openness += (openness - this.openness) * 0.5;
     this.spread += (spread - this.spread) * 0.5;
+    const o = this.openness;
+    const s = this.spread;
+
+    // 安静値（戻り位置）を自動追従：低い値はすぐ追従、上昇はゆっくり。
+    // → 各自・各軸の「楽な状態」を推定でき、戻り判定が正しく働く（特に「い」）。
+    this.baseOpen =
+      this.baseOpen == null ? o : o < this.baseOpen ? o : this.baseOpen + (o - this.baseOpen) * 0.002;
+    this.baseSpread =
+      this.baseSpread == null ? s : s < this.baseSpread ? s : this.baseSpread + (s - this.baseSpread) * 0.002;
 
     const To = this.openTarget;
     const Ts = this.spreadTarget;
-    this.reachedOpen = To != null && this.openness >= To;
-    this.reachedSpread = Ts != null && this.spread >= Ts;
+    this.reachedOpen = To != null && o >= To;
+    this.reachedSpread = Ts != null && s >= Ts;
+
+    // 各軸の「戻り」しきい値＝安静値 ＋ 目標までの 40%。
+    const relO = To != null ? this.baseOpen + 0.4 * (To - this.baseOpen) : null;
+    const relS = Ts != null ? this.baseSpread + 0.4 * (Ts - this.baseSpread) : null;
 
     const anyTarget = To != null || Ts != null;
-    // 設定された目標が「すべて」到達しているか（未設定の軸は無視）
     const allReached =
-      anyTarget &&
-      (To == null || this.openness >= To) &&
-      (Ts == null || this.spread >= Ts);
-    // 保持判定（ヒステリシス）：設定軸がすべて緩め閾値以上なら「まだ保持中」
-    const stillHolding =
-      anyTarget &&
-      (To == null || this.openness >= To * 0.6) &&
-      (Ts == null || this.spread >= Ts * 0.6);
+      anyTarget && (To == null || o >= To) && (Ts == null || s >= Ts);
+    // 「戻った」＝設定軸がすべて戻りしきい値以下
+    const released =
+      anyTarget && (To == null || o <= relO) && (Ts == null || s <= relS);
 
     this.reached = allReached;
-    // 反復カウント：目標の口の形に到達するたびに +1
+    // 反復カウント：到達→戻り→到達 のたびに +1
     if (this._openState === "closed" && allReached) {
       this._openState = "open";
       this.reps += 1;
       this.onRep && this.onRep(this.reps);
-    } else if (this._openState === "open" && !stillHolding) {
+    } else if (this._openState === "open" && released) {
       this._openState = "closed";
     }
   }

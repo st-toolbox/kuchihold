@@ -596,6 +596,7 @@ canvas.mouth {
   flex-direction: column;
   gap: 6px;
   padding: 10px;
+  max-width: 62%;
 }
 .train-meter {
   display: flex;
@@ -615,25 +616,28 @@ canvas.mouth {
 }
 .train-reps {
   position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
+  top: 8px;
+  right: 10px;
   display: flex;
   align-items: baseline;
-  gap: 6px;
+  gap: 4px;
   color: #fff;
-  text-shadow: 0 2px 10px #000;
+  background: rgba(0, 0, 0, 0.4);
+  border-radius: 12px;
+  padding: 4px 12px;
+  text-shadow: 0 2px 8px #000;
   pointer-events: none;
 }
 .train-reps .num {
-  font-size: 22vh;
+  font-size: 40px;
   font-weight: 800;
-  line-height: 0.9;
+  line-height: 1;
   font-variant-numeric: tabular-nums;
 }
 .train-reps .lbl {
-  font-size: 5vh;
+  font-size: 16px;
   font-weight: 700;
+  color: var(--muted);
 }
 .train-controls {
   margin-top: auto;
