@@ -184,3 +184,56 @@ export function formatDate(ms) {
     return "—";
   }
 }
+
+// ---- 設定スロット（5×10）-------------------------------------------------
+// 患者ごとの設定一式（位置合わせ・目標・表示・リズム等）をスロットに保存する。
+const SLOT_KEY = "kuchihold.slots.v1";
+export const SLOT_COLS = 5;
+export const SLOT_ROWS = 10;
+const SLOT_N = SLOT_COLS * SLOT_ROWS;
+
+let slotCache = loadSlots();
+
+function loadSlots() {
+  const out = new Array(SLOT_N).fill(null);
+  try {
+    const raw = localStorage.getItem(SLOT_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    if (Array.isArray(arr)) {
+      for (let i = 0; i < SLOT_N; i++) out[i] = arr[i] || null;
+    }
+  } catch {
+    /* ignore */
+  }
+  return out;
+}
+
+function saveSlots() {
+  try {
+    localStorage.setItem(SLOT_KEY, JSON.stringify(slotCache));
+  } catch (e) {
+    console.error("スロット保存に失敗", e);
+  }
+}
+
+export function getSlots() {
+  return slotCache;
+}
+
+export function getSlot(i) {
+  return slotCache[i] || null;
+}
+
+export function saveSlot(i, name, config) {
+  slotCache = [...slotCache];
+  slotCache[i] = { name: name || `No.${i + 1}`, savedAt: stamp(), config };
+  saveSlots();
+  emit();
+}
+
+export function clearSlot(i) {
+  slotCache = [...slotCache];
+  slotCache[i] = null;
+  saveSlots();
+  emit();
+}
