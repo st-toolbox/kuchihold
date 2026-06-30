@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { html } from "./html.js";
-import { MouthEngine, STAMP_TYPES } from "./mouthEngine.js";
-import * as store from "./store.js";
+import { html } from "./html.js?v=11";
+import { MouthEngine, STAMP_TYPES } from "./mouthEngine.js?v=11";
+import * as store from "./store.js?v=11";
 
 const COLORS = ["#ffd166", "#ef476f", "#06d6a0", "#4ea1ff", "#ffffff"];
 const OPEN_SCALE = 0.6; // 縦（あ）メーターの表示上限
@@ -546,7 +546,7 @@ function TargetCard(props) {
 function ViewCard(props) {
   const { settings, setSettings } = props;
   const set = (patch) => setSettings((s) => ({ ...s, ...patch }));
-  const nudge = (dx, dy) => set({ lmOffX: clampNum((settings.lmOffX || 0) + dx, -40, 40), lmOffY: clampNum((settings.lmOffY || 0) + dy, -40, 40) });
+  const nudge = (dx, dy) => set({ lmOffX: clampNum((settings.lmOffX || 0) + dx, -80, 80), lmOffY: clampNum((settings.lmOffY || 0) + dy, -80, 80) });
   return html`
     <div className="card">
       <h3>映像の安定化・表示</h3>
@@ -572,13 +572,13 @@ function ViewCard(props) {
           <span className="muted">X ${settings.lmOffX || 0} / Y ${settings.lmOffY || 0}px</span>
         </div>
         <div className="nudge">
-          <button onClick=${() => nudge(0, -2)}>▲</button>
+          <button onClick=${() => nudge(0, -3)}>▲</button>
           <div className="row" style=${{ gap: 6 }}>
-            <button onClick=${() => nudge(-2, 0)}>◀</button>
+            <button onClick=${() => nudge(-3, 0)}>◀</button>
             <button className="ghost small" onClick=${() => set({ lmOffX: 0, lmOffY: 0 })}>リセット</button>
-            <button onClick=${() => nudge(2, 0)}>▶</button>
+            <button onClick=${() => nudge(3, 0)}>▶</button>
           </div>
-          <button onClick=${() => nudge(0, 2)}>▼</button>
+          <button onClick=${() => nudge(0, 3)}>▼</button>
         </div>
         <p className="hint">点や輪郭が口元から少しずれて見える場合に、矢印で位置を微調整できます。</p>
       </div>
