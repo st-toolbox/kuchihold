@@ -24,6 +24,25 @@ export const EYE = {
   outerL: 263, // 向かって右（被験者の左目）外側
 };
 
+// 唇の輪郭（Face Mesh の標準ループ）。外側＝唇の外縁、内側＝口の開口部。
+const LIP_OUTER = [
+  61, 146, 91, 181, 84, 17, 314, 405, 321, 375, 291, 409, 270, 269, 267, 0,
+  37, 39, 40, 185,
+];
+const LIP_INNER = [
+  78, 95, 88, 178, 87, 14, 317, 402, 318, 324, 308, 415, 310, 311, 312, 13,
+  82, 81, 80, 191,
+];
+
+function loop(lm, idx) {
+  const out = [];
+  for (const i of idx) {
+    const p = lm[i];
+    if (p) out.push({ x: p.x, y: p.y });
+  }
+  return out;
+}
+
 let landmarkerPromise = null;
 
 async function build(fileset, delegate) {
@@ -95,5 +114,13 @@ export function detectMouth(landmarker, video, tMs) {
   // 開閉とは独立して「い」の動きを評価できる。
   const spread = Math.hypot(cr.x - cl.x, cr.y - cl.y) / faceSize;
 
-  return { centerX, centerY, faceSize, angle, openness, spread };
+  // 唇の輪郭と口角（描画用、すべて正規化座標）
+  const lips = {
+    outer: loop(lm, LIP_OUTER),
+    inner: loop(lm, LIP_INNER),
+    cornerL: { x: cl.x, y: cl.y },
+    cornerR: { x: cr.x, y: cr.y },
+  };
+
+  return { centerX, centerY, faceSize, angle, openness, spread, lips };
 }

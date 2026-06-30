@@ -23,6 +23,7 @@ const DEFAULTS = {
   zoom: 1.8, // クロップ幅 = 顔サイズ × zoom（大きいほど引き）
   smoothing: 0.6, // 固定の安定度。大きいほど静止時のジッターを抑える（動きの遅れは出にくい）
   shadowAlpha: 0.4,
+  showLandmarks: true, // 口角の点・唇の輪郭線を表示
 };
 
 export class MouthEngine {
@@ -50,6 +51,7 @@ export class MouthEngine {
     // 平滑化された顔ロック変換（source px / rad）
     this.sm = null; // {cx, cy, w, angle}
     this._filters = null; // One Euro Filter（cx,cy,w,angle）
+    this.lips = null; // 最新フレームの唇輪郭・口角（描画用）
     this.lastFaceAt = 0;
 
     // オーバーレイ（INTERNAL_W×INTERNAL_H 座標系で保存）
@@ -235,8 +237,11 @@ export class MouthEngine {
     if (mouth) {
       hasFace = true;
       this.lastFaceAt = t;
+      this.lips = mouth.lips;
       this._updateTransform(mouth, v, t);
       this._updateMetrics(mouth.openness, mouth.spread);
+    } else {
+      this.lips = null;
     }
 
     const ctx = this.ctx;
@@ -250,6 +255,7 @@ export class MouthEngine {
         ctx.drawImage(this.shadowCanvas, 0, 0);
         ctx.globalAlpha = 1;
       }
+      if (this.settings.showLandmarks) this._drawLandmarks(ctx); // 口角点・唇輪郭
       this._drawOverlays(ctx); // 手書き＆スタンプの目標
     } else {
       this._drawRawCover(ctx); // まだ顔ロック前：素の映像を表示
@@ -355,6 +361,64 @@ export class MouthEngine {
     ctx.translate(-sm.cx, -sm.cy);
     ctx.drawImage(this.video, 0, 0, this.video.videoWidth, this.video.videoHeight);
     ctx.restore();
+  }
+
+  // 正規化ランドマーク座標 → 出力キャンバス座標（_drawVideoCrop と同じ変換）
+  _project(nx, ny) {
+    const v = this.video;
+    const sm = this.sm;
+    const { mirror, level, zoom } = this.settings;
+    const cropW = clamp(sm.face * zoom, 40, 100000);
+    const scale = INTERNAL_W / cropW;
+    let dx = nx * v.videoWidth - sm.cx;
+    let dy = ny * v.videoHeight - sm.cy;
+    if (level) {
+      const a = -sm.angle;
+      const ca = Math.cos(a);
+      const sa = Math.sin(a);
+      const rx = dx * ca - dy * sa;
+      const ry = dx * sa + dy * ca;
+      dx = rx;
+      dy = ry;
+    }
+    return [
+      INTERNAL_W / 2 + (mirror ? -scale : scale) * dx,
+      INTERNAL_H / 2 + scale * dy,
+    ];
+  }
+
+  // 口角の点と上下唇のアウトラインを描画
+  _drawLandmarks(ctx) {
+    const L = this.lips;
+    if (!L) return;
+    ctx.save();
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+    ctx.lineWidth = 2.5;
+    ctx.strokeStyle = "rgba(80, 230, 255, 0.95)"; // 細い水色の輪郭線
+    this._strokeLoop(ctx, L.outer);
+    this._strokeLoop(ctx, L.inner);
+    // 左右の口角に小さな黄色点
+    ctx.fillStyle = "#ffe14d";
+    for (const c of [L.cornerL, L.cornerR]) {
+      const [x, y] = this._project(c.x, c.y);
+      ctx.beginPath();
+      ctx.arc(x, y, 6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  _strokeLoop(ctx, pts) {
+    if (!pts || pts.length < 2) return;
+    ctx.beginPath();
+    for (let i = 0; i < pts.length; i++) {
+      const [x, y] = this._project(pts[i].x, pts[i].y);
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    ctx.stroke();
   }
 
   // 顔ロック前の素の映像（cover）

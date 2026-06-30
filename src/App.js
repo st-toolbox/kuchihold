@@ -44,6 +44,7 @@ export function App() {
     zoom: 1.8, // 顔サイズ基準。大きいほど引き（口元＋周辺が広く映る）
     smoothing: 0.6,
     shadowAlpha: 0.4,
+    showLandmarks: true,
   });
   const [hasShadow, setHasShadow] = useState(false);
 
@@ -484,6 +485,9 @@ function ToolPanel(props) {
           </button>
           <button className=${settings.level ? "active" : ""} onClick=${() => set({ level: !settings.level })}>
             傾き補正
+          </button>
+          <button className=${settings.showLandmarks ? "active" : ""} onClick=${() => set({ showLandmarks: !settings.showLandmarks })}>
+            口元の輪郭
           </button>
         </div>
         <label className="field" style=${{ marginTop: 10 }}>
