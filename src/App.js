@@ -8,12 +8,19 @@ const OPEN_SCALE = 0.6; // 縦（あ）メーターの表示上限
 const SPREAD_SCALE = 0.8; // 横（い）メーターの表示上限
 const reachedStyle = { color: "#06231c", background: "#36c6a0", borderColor: "#36c6a0" };
 
+// 相対値 → 概算mm（推定）。mmPerRel が未確定なら「—」。
+function mmText(rel, mmPerRel) {
+  if (rel == null || !mmPerRel) return "—";
+  return `約${Math.round(rel * mmPerRel)}mm`;
+}
+
 export function App() {
   const canvasRef = useRef(null);
   const engineRef = useRef(null);
   const metricsRef = useRef({
     openness: 0,
     spread: 0,
+    mmPerRel: 0,
     reachedOpen: false,
     reachedSpread: false,
     reached: false,
@@ -456,7 +463,7 @@ function ToolPanel(props) {
 
         <div style=${{ marginTop: 6 }}>
           <div className="row between small"><span>あ（縦の開き）</span>
-            <span className="muted">今: ${metrics.openness.toFixed(2)} / 目標: ${openTarget == null ? "なし" : openTarget.toFixed(2)}</span>
+            <span className="muted">今: ${mmText(metrics.openness, metrics.mmPerRel)} / 目標: ${mmText(openTarget, metrics.mmPerRel)}</span>
           </div>
           <${Meter} value=${metrics.openness} target=${openTarget} scale=${OPEN_SCALE} reached=${metrics.reachedOpen} />
           <div className="row wrap" style=${{ marginTop: 6 }}>
@@ -467,7 +474,7 @@ function ToolPanel(props) {
 
         <div style=${{ marginTop: 12 }}>
           <div className="row between small"><span>い（横の広がり）</span>
-            <span className="muted">今: ${metrics.spread.toFixed(2)} / 目標: ${spreadTarget == null ? "なし" : spreadTarget.toFixed(2)}</span>
+            <span className="muted">今: ${mmText(metrics.spread, metrics.mmPerRel)} / 目標: ${mmText(spreadTarget, metrics.mmPerRel)}</span>
           </div>
           <${Meter} value=${metrics.spread} target=${spreadTarget} scale=${SPREAD_SCALE} reached=${metrics.reachedSpread} />
           <div className="row wrap" style=${{ marginTop: 6 }}>
@@ -475,6 +482,10 @@ function ToolPanel(props) {
             <button className="ghost" onClick=${() => setSpreadTarget(null)} disabled=${spreadTarget == null}>解除</button>
           </div>
         </div>
+
+        <p className="hint" style=${{ marginTop: 10 }}>
+          mm は片目幅32mmを基準にした<b>概算（推定値）</b>です。正面で計測してください。
+        </p>
       </div>
 
       <div className="card">
@@ -535,17 +546,26 @@ function PracticePanel({ metrics, openTarget, spreadTarget, startSession, endSes
           html`<span className=${"badge"} style=${metrics.reachedOpen ? reachedStyle : {}}>${metrics.reachedOpen ? "到達" : "もう少し"}</span>`}
         </div>
         <${Meter} value=${metrics.openness} target=${openTarget} scale=${OPEN_SCALE} reached=${metrics.reachedOpen} />
+        <div className="row between small muted" style=${{ marginTop: 4 }}>
+          <span>今: ${mmText(metrics.openness, metrics.mmPerRel)}</span>
+          <span>目標: ${mmText(openTarget, metrics.mmPerRel)}</span>
+        </div>
 
         <div className="row between small" style=${{ marginTop: 12 }}><span>い（横の広がり）</span>
           ${spreadTarget != null &&
           html`<span className=${"badge"} style=${metrics.reachedSpread ? reachedStyle : {}}>${metrics.reachedSpread ? "到達" : "もう少し"}</span>`}
         </div>
         <${Meter} value=${metrics.spread} target=${spreadTarget} scale=${SPREAD_SCALE} reached=${metrics.reachedSpread} />
+        <div className="row between small muted" style=${{ marginTop: 4 }}>
+          <span>今: ${mmText(metrics.spread, metrics.mmPerRel)}</span>
+          <span>目標: ${mmText(spreadTarget, metrics.mmPerRel)}</span>
+        </div>
 
         ${noTarget &&
         html`<p className="hint" style=${{ marginTop: 10 }}>
           目標が未設定です。ST指導モードで目標を設定するか、保存した目標を読み込んでください。
         </p>`}
+        <p className="hint" style=${{ marginTop: 8 }}>mm は概算（推定値・片目幅32mm基準）です。</p>
       </div>
 
       <div className="card" style=${{ textAlign: "center" }}>

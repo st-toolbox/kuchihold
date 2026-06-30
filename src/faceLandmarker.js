@@ -20,9 +20,16 @@ export const LIP = {
 // 顔の大きさの基準点（口の開閉では動かない＝拡大率を安定させるために使う）。
 // 左右の目の外側の角の距離を「顔サイズ」として用いる。
 export const EYE = {
-  outerR: 33, // 向かって左（被験者の右目）外側
-  outerL: 263, // 向かって右（被験者の左目）外側
+  outerR: 33, // 向かって左（被験者の右目）目尻
+  innerR: 133, // 被験者の右目 目頭
+  outerL: 263, // 向かって右（被験者の左目）目尻
+  innerL: 362, // 被験者の左目 目頭
 };
+
+// 概算 mm 換算用：片目の幅（目頭〜目尻）の平均値を 32mm と仮定する。
+// 距離が分からない単眼カメラでも、毎フレーム目幅で校正して大まかな実寸を推定する。
+// あくまで推定値（個人差・顔の向き・レンズ歪みで誤差あり）。
+export const ASSUMED_EYE_WIDTH_MM = 32;
 
 // 唇の輪郭（Face Mesh の標準ループ）。外側＝唇の外縁、内側＝口の開口部。
 const LIP_OUTER = [
@@ -93,7 +100,9 @@ export function detectMouth(landmarker, video, tMs) {
   const bi = lm[LIP.bottomInner];
   const er = lm[EYE.outerR];
   const el = lm[EYE.outerL];
-  if (!cl || !cr || !ti || !bi || !er || !el) return null;
+  const ir = lm[EYE.innerR];
+  const il = lm[EYE.innerL];
+  if (!cl || !cr || !ti || !bi || !er || !el || !ir || !il) return null;
 
   // すべて正規化座標 [0,1]（video の表示サイズに対する割合）
   const centerX = (cl.x + cr.x) / 2;
@@ -114,6 +123,14 @@ export function detectMouth(landmarker, video, tMs) {
   // 開閉とは独立して「い」の動きを評価できる。
   const spread = Math.hypot(cr.x - cl.x, cr.y - cl.y) / faceSize;
 
+  // 概算 mm 換算係数：相対値1.0あたりの mm。
+  // 片目幅（左右平均）を 32mm と仮定し、毎フレーム校正する。
+  const eyeWidth =
+    (Math.hypot(er.x - ir.x, er.y - ir.y) +
+      Math.hypot(el.x - il.x, el.y - il.y)) /
+      2 || 0.0001;
+  const mmPerRel = (faceSize / eyeWidth) * ASSUMED_EYE_WIDTH_MM;
+
   // 唇の輪郭と口角（描画用、すべて正規化座標）
   const lips = {
     outer: loop(lm, LIP_OUTER),
@@ -122,5 +139,5 @@ export function detectMouth(landmarker, video, tMs) {
     cornerR: { x: cr.x, y: cr.y },
   };
 
-  return { centerX, centerY, faceSize, angle, openness, spread, lips };
+  return { centerX, centerY, faceSize, angle, openness, spread, mmPerRel, lips };
 }

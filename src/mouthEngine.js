@@ -75,6 +75,7 @@ export class MouthEngine {
     this.spreadTarget = null; // 0..1 or null（横）
     this.openness = 0;
     this.spread = 0;
+    this.mmPerRel = 0; // 相対値1.0あたりの概算mm（片目幅32mm基準）
     this.reachedOpen = false;
     this.reachedSpread = false;
     this.reached = false; // 設定された目標が「すべて」到達
@@ -238,6 +239,9 @@ export class MouthEngine {
       hasFace = true;
       this.lastFaceAt = t;
       this.lips = mouth.lips;
+      this.mmPerRel = this.mmPerRel
+        ? this.mmPerRel + (mouth.mmPerRel - this.mmPerRel) * 0.3
+        : mouth.mmPerRel;
       this._updateTransform(mouth, v, t);
       this._updateMetrics(mouth.openness, mouth.spread);
     } else {
@@ -265,6 +269,7 @@ export class MouthEngine {
       this.onMetrics({
         openness: this.openness,
         spread: this.spread,
+        mmPerRel: this.mmPerRel,
         reachedOpen: this.reachedOpen,
         reachedSpread: this.reachedSpread,
         reached: this.reached,
