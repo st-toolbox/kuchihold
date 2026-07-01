@@ -12,7 +12,7 @@
 // ロックするが、唇の開閉そのものはロックしない。だから口の動きは見えるのに
 // 全体像はブレない。重ねた目標も同じ座標系なので自動的に顔へ追従する。
 
-import { createFaceLandmarker, detectMouth } from "./faceLandmarker.js?v=25";
+import { createFaceLandmarker, detectMouth } from "./faceLandmarker.js?v=26";
 
 const INTERNAL_W = 720;
 const INTERNAL_H = 960; // 3:4 縦
@@ -507,17 +507,21 @@ export class MouthEngine {
     const cy0 = SH / 2;
     const tol2 = this._tongueTol * this._tongueTol;
 
-    // 追従の起点：直前のピンク点（タップ位置 or 前フレーム）
+    // 追従の起点：直前のピンク点（タップ位置 or 前フレーム）。無ければ何もしない。
     const prev = this._tonguePink;
-    const prevx = prev ? prev.x * sx : cx0;
-    const prevy = prev ? prev.y * sy : cy0;
-    const searchR = SW * 0.5; // 近傍とみなす半径
+    if (!prev) {
+      this.tongueSig = { present: false, cover: 0, cx: 0, cy: 0 };
+      return;
+    }
+    const prevx = prev.x * sx;
+    const prevy = prev.y * sy;
+    // 近傍だけを追う（局所追跡）。半径を小さくして、唇など別の色の塊へ
+    // 飛び移らないようにする。見失っても遠くへワープさせない（再タップで取り直す）。
+    const searchR = SW * 0.16;
     const searchR2 = searchR * searchR;
 
     let winCount = 0; // 探索窓内の画素数（cover の分母）
-    let count = 0; // 一致色の総数
-    let sxa = 0;
-    let sya = 0; // 一致色の重心（cx/cy 信号用）
+    let count = 0; // 一致色の総数（cover 用）
     let nearCount = 0;
     let nsx = 0;
     let nsy = 0; // 直前点の近傍にある一致色の重心（追従用）
@@ -531,8 +535,6 @@ export class MouthEngine {
         const db = img[i + 2] - refColor.b;
         if (dr * dr + dg * dg + db * db >= tol2) continue;
         count++;
-        sxa += x;
-        sya += y;
         const dnx = x - prevx;
         const dny = y - prevy;
         if (dnx * dnx + dny * dny <= searchR2) {
@@ -543,37 +545,31 @@ export class MouthEngine {
       }
     }
 
-    const minCount = Math.max(6, winCount * 0.02);
-    if (count < minCount) {
-      // 見失い：present=false。点は直前位置に残す（タップ位置から消えない）。
-      this.tongueSig = { present: false, cover: 0, cx: 0, cy: 0 };
+    if (nearCount < 4) {
+      // 近傍に舌色が無い＝見失い。点は動かさずその場に残す（勝手に飛ばない）。
+      this.tongueSig = { present: false, cover: 0, cx: prev._cx || 0, cy: prev._cy || 0 };
       return;
     }
 
-    // 追従先：近傍に十分あればその重心（同じ塊を追う）、無ければ全体重心で再取得。
-    let tx;
-    let ty;
-    if (nearCount >= Math.max(4, minCount * 0.4)) {
-      tx = nsx / nearCount;
-      ty = nsy / nearCount;
-    } else {
-      tx = sxa / count;
-      ty = sya / count;
-    }
-    const nx = tx / sx;
-    const ny = ty / sy;
-    // 平滑化（0.5）で滑らかに追従
-    this._tonguePink = prev
-      ? { x: prev.x + (nx - prev.x) * 0.5, y: prev.y + (ny - prev.y) * 0.5 }
-      : { x: nx, y: ny };
+    // 追従先：近傍一致色の重心へ平滑化して寄せる（同じ塊だけを局所的に追う）
+    const nx = nsx / nearCount / sx;
+    const ny = nsy / nearCount / sy;
+    const px = prev.x + (nx - prev.x) * 0.5;
+    const py = prev.y + (ny - prev.y) * 0.5;
+    this._tonguePink = { x: px, y: py };
 
-    // 種目カウント用の信号（口中心からの相対位置）
+    // 種目カウント用の信号：追従中のピンク点の口中心からの相対位置。
+    // cx/cy を点に残しておき、見失い時も直前値を保てるようにする。
     const refLen = (INTERNAL_W / this.settings.zoom) * sx || 1;
+    const cx = (px * sx - cx0) / refLen;
+    const cy = (py * sy - cy0) / refLen;
+    this._tonguePink._cx = cx;
+    this._tonguePink._cy = cy;
     this.tongueSig = {
       present: true,
       cover: count / winCount,
-      cx: (sxa / count - cx0) / refLen,
-      cy: (sya / count - cy0) / refLen,
+      cx,
+      cy,
     };
   }
 
