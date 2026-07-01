@@ -12,7 +12,7 @@
 // ロックするが、唇の開閉そのものはロックしない。だから口の動きは見えるのに
 // 全体像はブレない。重ねた目標も同じ座標系なので自動的に顔へ追従する。
 
-import { createFaceLandmarker, detectMouth } from "./faceLandmarker.js?v=23";
+import { createFaceLandmarker, detectMouth } from "./faceLandmarker.js?v=24";
 
 const INTERNAL_W = 720;
 const INTERNAL_H = 960; // 3:4 縦
@@ -220,7 +220,9 @@ export class MouthEngine {
   // p は INTERNAL 座標（メインキャンバス基準）。
   _sampleTongueAt(p) {
     this.tapMarks.push({ x: p.x, y: p.y, t: performance.now() });
-    const ctx = this.ctx;
+    // 点・輪郭やピンク点の色を拾わないよう、クリーンな映像クロップから採取する。
+    const clean = this.snapshotCrop();
+    const ctx = clean ? clean.getContext("2d") : this.ctx;
     const R = 6; // タップ周辺 (2R+1)^2 を平均してノイズを抑える
     const x0 = clamp(Math.round(p.x) - R, 0, INTERNAL_W - 1);
     const y0 = clamp(Math.round(p.y) - R, 0, INTERNAL_H - 1);
@@ -518,11 +520,18 @@ export class MouthEngine {
     let maskCount = 0;
     let sxa = 0;
     let sya = 0;
-    let bestD = -1;
-    let tipx = 0;
-    let tipy = 0;
+    let bestFar = -1; // 口中心から最も遠い一致画素（初回の舌先推定）
+    let farx = 0;
+    let fary = 0;
+    let bestNear = Infinity; // 直前のピンク点に最も近い一致画素（追従用）
+    let nearx = 0;
+    let neary = 0;
     const cx0 = SW / 2;
     const cy0 = SH / 2;
+    // 追従の起点：直前のピンク点（タップ位置 or 前フレーム）を解析座標に変換
+    const prev = this._tonguePink;
+    const prevx = prev ? prev.x * sx : cx0;
+    const prevy = prev ? prev.y * sy : cy0;
     // 校正済み（タップで採取した色）なら色距離で判定、未校正なら従来のヒューリスティック。
     const refColor = this._tongueRef;
     const tol2 = this._tongueTol * this._tongueTol;
@@ -549,32 +558,52 @@ export class MouthEngine {
           count++;
           sxa += x;
           sya += y;
-          const dx = x - cx0;
-          const dy = y - cy0;
-          const d = dx * dx + dy * dy;
-          if (d > bestD) {
-            bestD = d;
-            tipx = x;
-            tipy = y;
+          // 口中心から最も遠い点（＝初回の舌先候補）
+          const dfx = x - cx0;
+          const dfy = y - cy0;
+          const df = dfx * dfx + dfy * dfy;
+          if (df > bestFar) {
+            bestFar = df;
+            farx = x;
+            fary = y;
+          }
+          // 直前のピンク点に最も近い点（＝フレーム間の追従）
+          const dnx = x - prevx;
+          const dny = y - prevy;
+          const dn = dnx * dnx + dny * dny;
+          if (dn < bestNear) {
+            bestNear = dn;
+            nearx = x;
+            neary = y;
           }
         }
       }
     }
-    if (maskCount < 30 || count < Math.max(18, maskCount * 0.06)) {
+    // 色校正済みなら判定を緩め（既に色一致で絞れているため）、未校正は厳しめ。
+    const minCount = refColor ? Math.max(8, maskCount * 0.03) : Math.max(18, maskCount * 0.06);
+    if (maskCount < 30 || count < minCount) {
+      // 見失い：present=false にするが、点は直前位置に残す（タップ位置から消えない）
       this.tongueSig = { present: false, cover: 0, cx: 0, cy: 0 };
-      this._tonguePink = null;
       return;
     }
     const cxp = sxa / count;
     const cyp = sya / count;
-    const ref = (INTERNAL_W / this.settings.zoom) * sx || 1;
+    const refLen = (INTERNAL_W / this.settings.zoom) * sx || 1;
     this.tongueSig = {
       present: true,
       cover: count / maskCount,
-      cx: (cxp - cx0) / ref,
-      cy: (cyp - cy0) / ref,
+      cx: (cxp - cx0) / refLen,
+      cy: (cyp - cy0) / refLen,
     };
-    this._tonguePink = { x: tipx / sx, y: tipy / sy };
+    // 追従点：前フレームがあれば「近傍の一致画素」、無ければ「最遠点」。
+    // 直前位置へ平滑化して寄せる（点が飛ばず、舌の動きに滑らかに追従）。
+    const tx = prev ? nearx : farx;
+    const ty = prev ? neary : fary;
+    const nx = tx / sx;
+    const ny = ty / sy;
+    this._tonguePink = prev
+      ? { x: prev.x + (nx - prev.x) * 0.5, y: prev.y + (ny - prev.y) * 0.5 }
+      : { x: nx, y: ny };
   }
 
   _maskPoly(mc, pts, sx, sy) {
@@ -634,13 +663,24 @@ export class MouthEngine {
   _drawPink(ctx) {
     const p = this._tonguePink;
     ctx.save();
-    ctx.fillStyle = "#ff5bd0";
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, 11, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.lineWidth = 3;
-    ctx.strokeStyle = "#fff";
-    ctx.stroke();
+    if (this.tongueSig.present) {
+      // 追従中：塗りつぶしのピンク点
+      ctx.fillStyle = "#ff5bd0";
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 11, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = "#fff";
+      ctx.stroke();
+    } else {
+      // タップ済みだが未検出：破線リングで「ここを見ています」を示す
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = "#ff5bd0";
+      ctx.setLineDash([6, 6]);
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 11, 0, Math.PI * 2);
+      ctx.stroke();
+    }
     ctx.restore();
   }
 
