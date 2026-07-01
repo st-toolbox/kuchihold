@@ -12,7 +12,7 @@
 // ロックするが、唇の開閉そのものはロックしない。だから口の動きは見えるのに
 // 全体像はブレない。重ねた目標も同じ座標系なので自動的に顔へ追従する。
 
-import { createFaceLandmarker, detectMouth } from "./faceLandmarker.js?v=20";
+import { createFaceLandmarker, detectMouth } from "./faceLandmarker.js?v=21";
 
 const INTERNAL_W = 720;
 const INTERNAL_H = 960; // 3:4 縦
@@ -118,6 +118,9 @@ export class MouthEngine {
     this._tongueFrame = 0;
     this._anaCanvas = null;
     this._maskCanvas = null;
+    // 舌先の色は「タップして同定」で本人・照明ごとに校正する。
+    this._tongueRef = null; // {r,g,b} タップでサンプルした舌先の色
+    this._tongueTol = 62; // 色距離の許容（大きいほど緩い）
 
     // コールバック
     this.onMetrics = null; // ({openness, spread, reachedOpen, reachedSpread, reached, reps, shadowMatch, hasFace})
@@ -205,7 +208,45 @@ export class MouthEngine {
     if (!v) {
       this._tonguePink = null;
       this.tongueSig = { present: false, cover: 0, cx: 0, cy: 0 };
+      this._tongueRef = null; // 舌リハを抜けたら色校正も破棄
     }
+  }
+  clearTongueRef() {
+    this._tongueRef = null;
+    this._tonguePink = null;
+    this.tongueSig = { present: false, cover: 0, cx: 0, cy: 0 };
+  }
+  // 画面の舌先タップ → その位置の色を採取して「舌先の色」として登録する。
+  // p は INTERNAL 座標（メインキャンバス基準）。
+  _sampleTongueAt(p) {
+    this.tapMarks.push({ x: p.x, y: p.y, t: performance.now() });
+    const ctx = this.ctx;
+    const R = 6; // タップ周辺 (2R+1)^2 を平均してノイズを抑える
+    const x0 = clamp(Math.round(p.x) - R, 0, INTERNAL_W - 1);
+    const y0 = clamp(Math.round(p.y) - R, 0, INTERNAL_H - 1);
+    const w = Math.min(2 * R + 1, INTERNAL_W - x0);
+    const h = Math.min(2 * R + 1, INTERNAL_H - y0);
+    let data;
+    try {
+      data = ctx.getImageData(x0, y0, w, h).data;
+    } catch {
+      return;
+    }
+    let r = 0;
+    let g = 0;
+    let b = 0;
+    let n = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      r += data[i];
+      g += data[i + 1];
+      b += data[i + 2];
+      n++;
+    }
+    if (!n) return;
+    this._tongueRef = { r: r / n, g: g / n, b: b / n };
+    // すぐにその位置へピンク点を出して反応を示す
+    this._tonguePink = { x: p.x, y: p.y };
+    this.tongueSig = { present: true, cover: 0, cx: 0, cy: 0 };
   }
   setTongueExercise(ex) {
     if (ex !== this._tongueExercise) {
@@ -423,6 +464,7 @@ export class MouthEngine {
         shadowMatch: this.shadowMatch,
         tongue: this.tongueSig,
         tongueReps: this.tongueReps,
+        tongueRef: !!this._tongueRef,
         hasFace,
       });
     }
@@ -481,6 +523,9 @@ export class MouthEngine {
     let tipy = 0;
     const cx0 = SW / 2;
     const cy0 = SH / 2;
+    // 校正済み（タップで採取した色）なら色距離で判定、未校正なら従来のヒューリスティック。
+    const ref = this._tongueRef;
+    const tol2 = this._tongueTol * this._tongueTol;
     for (let y = 0; y < SH; y++) {
       for (let x = 0; x < SW; x++) {
         const i = (y * SW + x) * 4;
@@ -489,9 +534,18 @@ export class MouthEngine {
         const r = img[i];
         const g = img[i + 1];
         const b = img[i + 2];
-        const sum = r + g + b;
-        // ピンク/赤：赤が優勢・明るすぎ(歯)/暗すぎ(空洞)を除外
-        if (r > 80 && r - g > 16 && r - b > 8 && sum > 150 && sum < 720) {
+        let hit;
+        if (ref) {
+          const dr = r - ref.r;
+          const dg = g - ref.g;
+          const db = b - ref.b;
+          hit = dr * dr + dg * dg + db * db < tol2;
+        } else {
+          const sum = r + g + b;
+          // ピンク/赤：赤が優勢・明るすぎ(歯)/暗すぎ(空洞)を除外
+          hit = r > 80 && r - g > 16 && r - b > 8 && sum > 150 && sum < 720;
+        }
+        if (hit) {
           count++;
           sxa += x;
           sya += y;
@@ -846,6 +900,12 @@ export class MouthEngine {
       if (this._calib) {
         e.preventDefault();
         this._handleCalibTap(p);
+        return;
+      }
+      // 舌リハ中はタップで舌先の色を同定（校正）する
+      if (this._tongueDetect) {
+        e.preventDefault();
+        this._sampleTongueAt(p);
         return;
       }
       if (!this.editable) return;

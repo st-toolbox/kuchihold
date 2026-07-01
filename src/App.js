@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { html } from "./html.js?v=20";
-import { MouthEngine } from "./mouthEngine.js?v=20";
-import * as store from "./store.js?v=20";
+import { html } from "./html.js?v=21";
+import { MouthEngine } from "./mouthEngine.js?v=21";
+import * as store from "./store.js?v=21";
 
 const OPEN_SCALE = 0.6; // 縦（あ）メーターの表示上限
 const SPREAD_SCALE = 0.8; // 横（い）メーターの表示上限
 const reachedStyle = { color: "#06231c", background: "#36c6a0", borderColor: "#36c6a0" };
-const APP_VERSION = "v20";
+const APP_VERSION = "v21";
 
 const TONGUE_EXERCISES = [
   { id: "protrude", label: "挺舌（前に出す）" },
@@ -68,7 +68,7 @@ export function App() {
     openness: 0, spread: 0, mmPerRel: 0,
     reachedOpen: false, reachedSpread: false, reached: false,
     reps: 0, shadowMatch: false, hasFace: false,
-    tongue: { present: false, cover: 0, cx: 0, cy: 0 }, tongueReps: 0,
+    tongue: { present: false, cover: 0, cx: 0, cy: 0 }, tongueReps: 0, tongueRef: false,
   });
   const sessionStartRef = useRef(null);
   const audioCtxRef = useRef(null);
@@ -218,6 +218,8 @@ export function App() {
     }
   }, [ready, startCalib]);
 
+  const resetTongueRef = useCallback(() => eng().clearTongueRef(), []);
+
   const setOpenFromCurrent = useCallback(() => setOpenTarget(+metricsRef.current.openness.toFixed(3)), []);
   const setSpreadFromCurrent = useCallback(() => setSpreadTarget(+metricsRef.current.spread.toFixed(3)), []);
 
@@ -262,7 +264,7 @@ export function App() {
     calib, startCalib,
     slots, currentConfig, applyConfig,
     setError, rehab,
-    tongueExercise, setTongueExercise,
+    tongueExercise, setTongueExercise, resetTongueRef,
   };
   const tabs = rehab === "tongue" ? TONGUE_TABS : LIPS_TABS;
   const effTab = tabs.some((t) => t.id === tab) ? tab : tabs[0].id;
@@ -392,16 +394,22 @@ function TrainOverlay(props) {
   const tongueMode = rehab === "tongue" && tongueExercise != null;
   const hasTarget = tongueMode || openTarget != null || spreadTarget != null;
   const tg = metrics.tongue || { present: false };
+  const calibrated = !!metrics.tongueRef;
   const reps = tongueMode ? metrics.tongueReps || 0 : metrics.reps;
+  const tongueState = !calibrated
+    ? "画面の舌先をタップ"
+    : tg.present
+    ? "追跡中"
+    : "舌が見えません";
 
   return html`
     <div className="train-overlay">
       <div className="train-top">
         ${tongueMode
-          ? html`<div className=${"train-tongue" + (tg.present ? " hit" : "")}>
+          ? html`<div className=${"train-tongue" + (calibrated && tg.present ? " hit" : "")}>
               <span className="muted">舌の種目</span>
               <b>${tongueExLabel(tongueExercise)}</b>
-              <span className="now">${tg.present ? "検出中" : "舌が見えません"}</span>
+              <span className="now">${tongueState}</span>
             </div>`
           : html`
             ${openTarget != null &&
@@ -589,17 +597,35 @@ function RhythmCard({ bpm, setBpm, rhythmOn, setRhythmOn }) {
   `;
 }
 
-// ---- 舌の種目（舌先の色検出で自動カウント）--------------------------------
+// ---- 舌の種目（舌先をタップで同定 → 色で自動追跡・カウント）----------------
 function TongueCard(props) {
-  const { tongueExercise, setTongueExercise, metrics } = props;
+  const { tongueExercise, setTongueExercise, resetTongueRef, metrics } = props;
   const tg = metrics.tongue || { present: false };
+  const calibrated = !!metrics.tongueRef;
   return html`
     <div className="side">
       <div className="card">
-        <h3>舌の種目を選ぶ</h3>
+        <h3>① 舌先を同定する（タップ校正）</h3>
         <p className="hint">
-          舌先を色で検出し、<b style=${{ color: "#ff5bd0" }}>ピンクの点</b>で表示します。
-          ガイド点（<b style=${{ color: "#4ea1ff" }}>水色＝左右</b>／<b style=${{ color: "#ff5b6e" }}>赤＝上下</b>）を目安に動かしてください。
+          患者に舌を出してもらい、<b>カメラ画面に映った舌先を指でタップ</b>してください。
+          その色を基準に舌先を追跡し、<b style=${{ color: "#ff5bd0" }}>ピンクの点</b>で表示します。
+          照明や口紅で色が変わったら、もう一度タップし直せば再校正できます。
+        </p>
+        <div className="row between small" style=${{ marginTop: 4 }}>
+          <span className="muted">舌先の同定</span>
+          <span className="badge" style=${calibrated ? reachedStyle : {}}>
+            ${calibrated ? (tg.present ? "追跡中" : "見失い中（もう一度タップ）") : "未同定（画面の舌先をタップ）"}
+          </span>
+        </div>
+        <button className="ghost" style=${{ marginTop: 8 }} onClick=${resetTongueRef} disabled=${!calibrated}>
+          同定をリセット
+        </button>
+      </div>
+
+      <div className="card">
+        <h3>② 種目を選ぶ</h3>
+        <p className="hint">
+          ガイド点（<b style=${{ color: "#4ea1ff" }}>水色＝左右</b>／<b style=${{ color: "#ff5b6e" }}>赤＝上下</b>）を目安に動かします。
         </p>
         <div className="list">
           ${TONGUE_EXERCISES.map(
@@ -611,13 +637,9 @@ function TongueCard(props) {
             </button>`
           )}
         </div>
-        <div className="row between small" style=${{ marginTop: 10 }}>
-          <span className="muted">舌の検出</span>
-          <span className="badge" style=${tg.present ? reachedStyle : {}}>${tg.present ? "検出中" : "舌が見えません"}</span>
-        </div>
         <p className="hint" style=${{ marginTop: 8 }}>
-          種目を選ぶと「訓練」で自動カウントします（挺舌＝出す/戻すで1回、左右・上下＝端に届くたび1回）。
-          <b>実験的機能</b>のため、明るい照明・正面で精度が上がります。
+          「訓練」で自動カウントします（挺舌＝出す/戻すで1回、左右・上下＝端に届くたび1回）。
+          <b>まず①で舌先をタップ</b>してから種目を始めてください。
         </p>
       </div>
     </div>
