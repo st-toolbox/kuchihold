@@ -12,7 +12,7 @@
 // ロックするが、唇の開閉そのものはロックしない。だから口の動きは見えるのに
 // 全体像はブレない。重ねた目標も同じ座標系なので自動的に顔へ追従する。
 
-import { createFaceLandmarker, detectMouth } from "./faceLandmarker.js?v=22";
+import { createFaceLandmarker, detectMouth } from "./faceLandmarker.js?v=23";
 
 const INTERNAL_W = 720;
 const INTERNAL_H = 960; // 3:4 縦
@@ -524,7 +524,7 @@ export class MouthEngine {
     const cx0 = SW / 2;
     const cy0 = SH / 2;
     // 校正済み（タップで採取した色）なら色距離で判定、未校正なら従来のヒューリスティック。
-    const ref = this._tongueRef;
+    const refColor = this._tongueRef;
     const tol2 = this._tongueTol * this._tongueTol;
     for (let y = 0; y < SH; y++) {
       for (let x = 0; x < SW; x++) {
@@ -535,10 +535,10 @@ export class MouthEngine {
         const g = img[i + 1];
         const b = img[i + 2];
         let hit;
-        if (ref) {
-          const dr = r - ref.r;
-          const dg = g - ref.g;
-          const db = b - ref.b;
+        if (refColor) {
+          const dr = r - refColor.r;
+          const dg = g - refColor.g;
+          const db = b - refColor.b;
           hit = dr * dr + dg * dg + db * db < tol2;
         } else {
           const sum = r + g + b;

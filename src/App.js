@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { html } from "./html.js?v=22";
-import { MouthEngine } from "./mouthEngine.js?v=22";
-import * as store from "./store.js?v=22";
+import { html } from "./html.js?v=23";
+import { MouthEngine } from "./mouthEngine.js?v=23";
+import * as store from "./store.js?v=23";
 
 const OPEN_SCALE = 0.6; // 縦（あ）メーターの表示上限
 const SPREAD_SCALE = 0.8; // 横（い）メーターの表示上限
 const reachedStyle = { color: "#06231c", background: "#36c6a0", borderColor: "#36c6a0" };
-const APP_VERSION = "v22";
+const APP_VERSION = "v23";
 
 const TONGUE_EXERCISES = [
   { id: "protrude", label: "挺舌（前に出す）" },
