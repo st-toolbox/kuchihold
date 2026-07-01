@@ -12,7 +12,7 @@
 // ロックするが、唇の開閉そのものはロックしない。だから口の動きは見えるのに
 // 全体像はブレない。重ねた目標も同じ座標系なので自動的に顔へ追従する。
 
-import { createFaceLandmarker, detectMouth } from "./faceLandmarker.js?v=21";
+import { createFaceLandmarker, detectMouth } from "./faceLandmarker.js?v=22";
 
 const INTERNAL_W = 720;
 const INTERNAL_H = 960; // 3:4 縦

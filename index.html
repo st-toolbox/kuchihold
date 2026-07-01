@@ -11,7 +11,7 @@
       name="description"
       content="言語聴覚療法（ST）向け 口腔運動トレーニング・ミラーセラピー支援アプリ"
     />
-    <link rel="stylesheet" href="./styles.css?v=21" />
+    <link rel="stylesheet" href="./styles.css?v=22" />
 
     <!--
       npm install 不要で動くプロトタイプ構成。
@@ -34,8 +34,62 @@
       <div class="boot">読み込み中…</div>
     </div>
     <noscript>このアプリの利用には JavaScript を有効にしてください。</noscript>
-    <script type="module" src="./src/main.js?v=21"></script>
+    <script type="module" src="./src/main.js?v=22"></script>
     <script>
+      // ---- ブート監視 -----------------------------------------------------
+      // モジュール（自身の JS や CDN 読み込み）の失敗で React が起動できないと
+      // 静的な「読み込み中…」のまま固まって見える。原因を表示し、再読み込み
+      // ／キャッシュ削除で復帰できるようにする。
+      (function () {
+        var booted = function () {
+          return window.__appBooted === true;
+        };
+        var showFallback = function (detail) {
+          if (booted()) return;
+          var root = document.getElementById("root");
+          if (!root) return;
+          root.innerHTML =
+            '<div class="boot-fallback">' +
+            '<div class="bf-title">起動できませんでした</div>' +
+            '<div class="bf-msg">通信状況をご確認のうえ、再読み込みしてください。' +
+            "改善しない場合は「更新して再読み込み」をお試しください。</div>" +
+            (detail ? '<div class="bf-detail">' + detail + "</div>" : "") +
+            '<div class="bf-btns">' +
+            '<button id="bf-reload">🔄 再読み込み</button>' +
+            '<button id="bf-hard">🧹 更新して再読み込み</button>' +
+            "</div></div>";
+          document.getElementById("bf-reload").onclick = function () {
+            window.location.reload();
+          };
+          document.getElementById("bf-hard").onclick = async function () {
+            try {
+              if ("caches" in window) {
+                var keys = await caches.keys();
+                await Promise.all(keys.map(function (k) { return caches.delete(k); }));
+              }
+              if (navigator.serviceWorker) {
+                var regs = await navigator.serviceWorker.getRegistrations();
+                await Promise.all(regs.map(function (r) { return r.unregister(); }));
+              }
+            } catch (e) {
+              /* 失敗しても再読み込みは行う */
+            }
+            window.location.reload();
+          };
+        };
+        // モジュール読み込み／実行時の失敗を捕捉
+        window.addEventListener("error", function (ev) {
+          var d = ev && ev.message ? String(ev.message) : "";
+          if (ev && ev.target && ev.target.src) d = "読み込み失敗: " + ev.target.src;
+          if (!booted()) showFallback(d);
+        }, true);
+        window.addEventListener("unhandledrejection", function (ev) {
+          if (!booted()) showFallback(ev && ev.reason ? String(ev.reason) : "");
+        });
+        // 一定時間起動しなければ案内を出す
+        setTimeout(function () { showFallback(""); }, 12000);
+      })();
+
       // 常に最新を読み込む（オンライン時は network-first）。更新が確実に届くように。
       if ("serviceWorker" in navigator) {
         window.addEventListener("load", () => {

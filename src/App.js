@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { html } from "./html.js?v=21";
-import { MouthEngine } from "./mouthEngine.js?v=21";
-import * as store from "./store.js?v=21";
+import { html } from "./html.js?v=22";
+import { MouthEngine } from "./mouthEngine.js?v=22";
+import * as store from "./store.js?v=22";
 
 const OPEN_SCALE = 0.6; // 縦（あ）メーターの表示上限
 const SPREAD_SCALE = 0.8; // 横（い）メーターの表示上限
 const reachedStyle = { color: "#06231c", background: "#36c6a0", borderColor: "#36c6a0" };
-const APP_VERSION = "v21";
+const APP_VERSION = "v22";
 
 const TONGUE_EXERCISES = [
   { id: "protrude", label: "挺舌（前に出す）" },
@@ -75,6 +75,7 @@ export function App() {
   const autoCalibRef = useRef(false);
 
   const [ready, setReady] = useState(false);
+  const [stalled, setStalled] = useState(false);
   const [error, setError] = useState(null);
   const [rehab, setRehab] = useState("lips"); // lips | tongue（リハ種別の根本切替）
   const [mode, setMode] = useState("setup"); // setup | train
@@ -119,6 +120,17 @@ export function App() {
     eng.start().then(() => setReady(true)).catch(() => {});
     return () => eng.stop();
   }, []);
+
+  // 起動ウォッチドッグ：一定時間 ready にならなければ「固まった」ではなく
+  // 再読み込み等の手を打てるよう、案内を表示する（カメラ許可・通信の失敗対策）。
+  useEffect(() => {
+    if (ready) {
+      setStalled(false);
+      return;
+    }
+    const id = setTimeout(() => setStalled(true), 12000);
+    return () => clearTimeout(id);
+  }, [ready]);
 
   useEffect(() => {
     const id = setInterval(() => setMetrics({ ...metricsRef.current }), 100);
@@ -313,6 +325,7 @@ export function App() {
           key="stage"
           canvasRef=${canvasRef}
           ready=${ready}
+          stalled=${stalled}
           metrics=${metrics}
           mode=${mode}
           calib=${calib}
@@ -339,7 +352,7 @@ export function App() {
 // ---- 中央ステージ（常時マウント：カメラ要素を安定させる）------------------
 function Stage(props) {
   const {
-    canvasRef, ready, metrics, mode, calib, onSkip,
+    canvasRef, ready, stalled, metrics, mode, calib, onSkip,
     rhythmOn, rhythmPhase, openTarget, spreadTarget, reached,
     sessionActive, startSession, endSession,
     rehab, tongueExercise,
@@ -359,6 +372,15 @@ function Stage(props) {
 
         ${!calib && !train &&
         html`<div className=${"stage-status" + (warn ? " warn" : "")}>${statusText}</div>`}
+
+        ${!ready && stalled &&
+        html`<div className="stage-stalled">
+          <div className="msg">
+            カメラの準備に時間がかかっています。<br />
+            カメラの許可を「許可」にして、ページを再読み込みしてください。
+          </div>
+          <button className="primary" onClick=${() => window.location.reload()}>🔄 再読み込み</button>
+        </div>`}
 
         ${calib &&
         html`<button className="calib-skip" onClick=${onSkip}>スキップ ✕</button>`}
