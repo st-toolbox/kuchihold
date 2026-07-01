@@ -12,7 +12,7 @@
 // ロックするが、唇の開閉そのものはロックしない。だから口の動きは見えるのに
 // 全体像はブレない。重ねた目標も同じ座標系なので自動的に顔へ追従する。
 
-import { createFaceLandmarker, detectMouth } from "./faceLandmarker.js?v=11";
+import { createFaceLandmarker, detectMouth } from "./faceLandmarker.js?v=20";
 
 const INTERNAL_W = 720;
 const INTERNAL_H = 960; // 3:4 縦
@@ -106,6 +106,19 @@ export class MouthEngine {
     this._showTonguePoints = false;
     this._tongueTarget = null; // 'left'|'right'|'up'|'down'|null
 
+    // 舌先の色検出（学習不要）＋種目カウント
+    this._tongueDetect = false;
+    this._tongueExercise = null; // 'protrude'|'lr'|'ud'
+    this.tongueReps = 0;
+    this.tongueSig = { present: false, cover: 0, cx: 0, cy: 0 };
+    this._tonguePink = null; // 舌先の位置（INTERNAL座標）
+    this._lrSide = 0;
+    this._udSide = 0;
+    this._protArm = true;
+    this._tongueFrame = 0;
+    this._anaCanvas = null;
+    this._maskCanvas = null;
+
     // コールバック
     this.onMetrics = null; // ({openness, spread, reachedOpen, reachedSpread, reached, reps, shadowMatch, hasFace})
     this.onRep = null; // (reps)
@@ -187,6 +200,25 @@ export class MouthEngine {
   setTongueTargetPoint(id) {
     this._tongueTarget = id;
   }
+  setTongueDetect(v) {
+    this._tongueDetect = !!v;
+    if (!v) {
+      this._tonguePink = null;
+      this.tongueSig = { present: false, cover: 0, cx: 0, cy: 0 };
+    }
+  }
+  setTongueExercise(ex) {
+    if (ex !== this._tongueExercise) {
+      this._tongueExercise = ex;
+      this._resetTongueReps();
+    }
+  }
+  _resetTongueReps() {
+    this.tongueReps = 0;
+    this._lrSide = 0;
+    this._udSide = 0;
+    this._protArm = true;
+  }
 
   // ---- オーバーレイ操作 ----------------------------------------------------
 
@@ -223,6 +255,7 @@ export class MouthEngine {
   resetReps() {
     this.reps = 0;
     this._openState = "closed";
+    this._resetTongueReps();
   }
 
   // 目印を含まない、安定化済みの口元クロップを返す（舌の判定用の入力画像）
@@ -354,7 +387,15 @@ export class MouthEngine {
     ctx.clearRect(0, 0, INTERNAL_W, INTERNAL_H);
 
     if (this.sm) {
-      this._drawVideoCrop(ctx); // 安定化した口元
+      this._drawVideoCrop(ctx); // 安定化した口元（この時点では映像のみ）
+      // 舌先の色検出（クリーンな映像に対して。2フレームに1回）
+      if (this._tongueDetect && this.lips && this.lips.targets) {
+        this._tongueFrame++;
+        if (this._tongueFrame % 2 === 0) {
+          this._detectTongueTip();
+          this._countTongue();
+        }
+      }
       if (this.hasShadow) {
         ctx.globalAlpha = this.settings.shadowAlpha;
         ctx.drawImage(this.shadowCanvas, 0, 0);
@@ -362,6 +403,7 @@ export class MouthEngine {
       }
       if (this.settings.showLandmarks) this._drawLandmarks(ctx); // 口角点・唇輪郭
       this._drawOverlays(ctx); // 手書き＆スタンプの目標
+      if (this._tongueDetect && this._tonguePink) this._drawPink(ctx); // 舌先ピンク点
       if (this.shadowMatch) this._drawMatchFeedback(ctx); // ぴったり！
     } else {
       this._drawRawCover(ctx); // まだ顔ロック前：素の映像を表示
@@ -379,10 +421,174 @@ export class MouthEngine {
         reached: this.reached,
         reps: this.reps,
         shadowMatch: this.shadowMatch,
+        tongue: this.tongueSig,
+        tongueReps: this.tongueReps,
         hasFace,
       });
     }
   };
+
+  // 舌先の色検出：口の内側＋下唇周辺のマスク内で、ピンク/赤の領域から舌先を推定
+  _detectTongueTip() {
+    const SW = 120;
+    const SH = 160;
+    if (!this._anaCanvas) {
+      this._anaCanvas = document.createElement("canvas");
+      this._anaCanvas.width = SW;
+      this._anaCanvas.height = SH;
+      this._anaCtx = this._anaCanvas.getContext("2d", { willReadFrequently: true });
+      this._maskCanvas = document.createElement("canvas");
+      this._maskCanvas.width = SW;
+      this._maskCanvas.height = SH;
+      this._maskCtx = this._maskCanvas.getContext("2d", { willReadFrequently: true });
+    }
+    const sx = SW / INTERNAL_W;
+    const sy = SH / INTERNAL_H;
+    const L = this.lips;
+
+    // 解析対象：現在のクリーンな口元（メインキャンバス）を縮小
+    this._anaCtx.drawImage(this.canvas, 0, 0, INTERNAL_W, INTERNAL_H, 0, 0, SW, SH);
+
+    // マスク：口の内側ポリゴン ＋ 下唇の下へ伸ばした四角（挺舌をとらえる）
+    const mc = this._maskCtx;
+    mc.clearRect(0, 0, SW, SH);
+    mc.fillStyle = "#fff";
+    this._maskPoly(mc, L.inner, sx, sy);
+    const T = L.targets;
+    const lc = this._project(T.left.x, T.left.y);
+    const rc = this._project(T.right.x, T.right.y);
+    const dn = this._project(T.down.x, T.down.y);
+    const mx = (lc[0] + rc[0]) / 2;
+    const my = (lc[1] + rc[1]) / 2;
+    const dvx = (dn[0] - mx) * 1.3;
+    const dvy = (dn[1] - my) * 1.3;
+    mc.beginPath();
+    mc.moveTo(lc[0] * sx, lc[1] * sy);
+    mc.lineTo(rc[0] * sx, rc[1] * sy);
+    mc.lineTo((rc[0] + dvx) * sx, (rc[1] + dvy) * sy);
+    mc.lineTo((lc[0] + dvx) * sx, (lc[1] + dvy) * sy);
+    mc.closePath();
+    mc.fill();
+
+    const img = this._anaCtx.getImageData(0, 0, SW, SH).data;
+    const md = mc.getImageData(0, 0, SW, SH).data;
+    let count = 0;
+    let maskCount = 0;
+    let sxa = 0;
+    let sya = 0;
+    let bestD = -1;
+    let tipx = 0;
+    let tipy = 0;
+    const cx0 = SW / 2;
+    const cy0 = SH / 2;
+    for (let y = 0; y < SH; y++) {
+      for (let x = 0; x < SW; x++) {
+        const i = (y * SW + x) * 4;
+        if (md[i + 3] < 128) continue;
+        maskCount++;
+        const r = img[i];
+        const g = img[i + 1];
+        const b = img[i + 2];
+        const sum = r + g + b;
+        // ピンク/赤：赤が優勢・明るすぎ(歯)/暗すぎ(空洞)を除外
+        if (r > 80 && r - g > 16 && r - b > 8 && sum > 150 && sum < 720) {
+          count++;
+          sxa += x;
+          sya += y;
+          const dx = x - cx0;
+          const dy = y - cy0;
+          const d = dx * dx + dy * dy;
+          if (d > bestD) {
+            bestD = d;
+            tipx = x;
+            tipy = y;
+          }
+        }
+      }
+    }
+    if (maskCount < 30 || count < Math.max(18, maskCount * 0.06)) {
+      this.tongueSig = { present: false, cover: 0, cx: 0, cy: 0 };
+      this._tonguePink = null;
+      return;
+    }
+    const cxp = sxa / count;
+    const cyp = sya / count;
+    const ref = (INTERNAL_W / this.settings.zoom) * sx || 1;
+    this.tongueSig = {
+      present: true,
+      cover: count / maskCount,
+      cx: (cxp - cx0) / ref,
+      cy: (cyp - cy0) / ref,
+    };
+    this._tonguePink = { x: tipx / sx, y: tipy / sy };
+  }
+
+  _maskPoly(mc, pts, sx, sy) {
+    if (!pts || pts.length < 3) return;
+    mc.beginPath();
+    for (let i = 0; i < pts.length; i++) {
+      const p = this._project(pts[i].x, pts[i].y);
+      if (i === 0) mc.moveTo(p[0] * sx, p[1] * sy);
+      else mc.lineTo(p[0] * sx, p[1] * sy);
+    }
+    mc.closePath();
+    mc.fill();
+  }
+
+  // 種目ごとの反復カウント（左右反復／上下反復／挺舌）
+  _countTongue() {
+    const ex = this._tongueExercise;
+    const s = this.tongueSig;
+    if (!ex) return;
+    if (ex === "protrude") {
+      if (s.present && s.cover > 0.22 && this._protArm) {
+        this._protArm = false;
+        this.tongueReps++;
+        this.onRep && this.onRep(this.tongueReps);
+      } else if (!s.present || s.cover < 0.1) {
+        this._protArm = true;
+      }
+    } else if (ex === "lr") {
+      const T = 0.25;
+      if (s.present) {
+        if (s.cx < -T && this._lrSide !== -1) {
+          this._lrSide = -1;
+          this.tongueReps++;
+          this.onRep && this.onRep(this.tongueReps);
+        } else if (s.cx > T && this._lrSide !== 1) {
+          this._lrSide = 1;
+          this.tongueReps++;
+          this.onRep && this.onRep(this.tongueReps);
+        }
+      }
+    } else if (ex === "ud") {
+      const T = 0.22;
+      if (s.present) {
+        if (s.cy < -T && this._udSide !== -1) {
+          this._udSide = -1;
+          this.tongueReps++;
+          this.onRep && this.onRep(this.tongueReps);
+        } else if (s.cy > T && this._udSide !== 1) {
+          this._udSide = 1;
+          this.tongueReps++;
+          this.onRep && this.onRep(this.tongueReps);
+        }
+      }
+    }
+  }
+
+  _drawPink(ctx) {
+    const p = this._tonguePink;
+    ctx.save();
+    ctx.fillStyle = "#ff5bd0";
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 11, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = "#fff";
+    ctx.stroke();
+    ctx.restore();
+  }
 
   _updateTransform(mouth, v, t) {
     const cx = mouth.centerX * v.videoWidth;
