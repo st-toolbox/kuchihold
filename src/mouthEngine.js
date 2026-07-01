@@ -12,7 +12,7 @@
 // ロックするが、唇の開閉そのものはロックしない。だから口の動きは見えるのに
 // 全体像はブレない。重ねた目標も同じ座標系なので自動的に顔へ追従する。
 
-import { createFaceLandmarker, detectMouth } from "./faceLandmarker.js?v=24";
+import { createFaceLandmarker, detectMouth } from "./faceLandmarker.js?v=25";
 
 const INTERNAL_W = 720;
 const INTERNAL_H = 960; // 3:4 縦
@@ -472,7 +472,9 @@ export class MouthEngine {
     }
   };
 
-  // 舌先の色検出：口の内側＋下唇周辺のマスク内で、ピンク/赤の領域から舌先を推定
+  // 舌先の色追跡：口を中心とした広めの固定探索窓の中で、校正色（タップで採取）に
+  // 一致する画素を探し、直前の点の近くにある塊を舌先として追う。
+  // 唇ランドマークのマスクに頼らないので、口を閉じても点が飛ばず、開け直すと再取得する。
   _detectTongueTip() {
     const SW = 120;
     const SH = 160;
@@ -481,141 +483,98 @@ export class MouthEngine {
       this._anaCanvas.width = SW;
       this._anaCanvas.height = SH;
       this._anaCtx = this._anaCanvas.getContext("2d", { willReadFrequently: true });
-      this._maskCanvas = document.createElement("canvas");
-      this._maskCanvas.width = SW;
-      this._maskCanvas.height = SH;
-      this._maskCtx = this._maskCanvas.getContext("2d", { willReadFrequently: true });
     }
     const sx = SW / INTERNAL_W;
     const sy = SH / INTERNAL_H;
-    const L = this.lips;
-
-    // 解析対象：現在のクリーンな口元（メインキャンバス）を縮小
-    this._anaCtx.drawImage(this.canvas, 0, 0, INTERNAL_W, INTERNAL_H, 0, 0, SW, SH);
-
-    // マスク：口の内側ポリゴン ＋ 下唇の下へ伸ばした四角（挺舌をとらえる）
-    const mc = this._maskCtx;
-    mc.clearRect(0, 0, SW, SH);
-    mc.fillStyle = "#fff";
-    this._maskPoly(mc, L.inner, sx, sy);
-    const T = L.targets;
-    const lc = this._project(T.left.x, T.left.y);
-    const rc = this._project(T.right.x, T.right.y);
-    const dn = this._project(T.down.x, T.down.y);
-    const mx = (lc[0] + rc[0]) / 2;
-    const my = (lc[1] + rc[1]) / 2;
-    const dvx = (dn[0] - mx) * 1.3;
-    const dvy = (dn[1] - my) * 1.3;
-    mc.beginPath();
-    mc.moveTo(lc[0] * sx, lc[1] * sy);
-    mc.lineTo(rc[0] * sx, rc[1] * sy);
-    mc.lineTo((rc[0] + dvx) * sx, (rc[1] + dvy) * sy);
-    mc.lineTo((lc[0] + dvx) * sx, (lc[1] + dvy) * sy);
-    mc.closePath();
-    mc.fill();
-
-    const img = this._anaCtx.getImageData(0, 0, SW, SH).data;
-    const md = mc.getImageData(0, 0, SW, SH).data;
-    let count = 0;
-    let maskCount = 0;
-    let sxa = 0;
-    let sya = 0;
-    let bestFar = -1; // 口中心から最も遠い一致画素（初回の舌先推定）
-    let farx = 0;
-    let fary = 0;
-    let bestNear = Infinity; // 直前のピンク点に最も近い一致画素（追従用）
-    let nearx = 0;
-    let neary = 0;
-    const cx0 = SW / 2;
-    const cy0 = SH / 2;
-    // 追従の起点：直前のピンク点（タップ位置 or 前フレーム）を解析座標に変換
-    const prev = this._tonguePink;
-    const prevx = prev ? prev.x * sx : cx0;
-    const prevy = prev ? prev.y * sy : cy0;
-    // 校正済み（タップで採取した色）なら色距離で判定、未校正なら従来のヒューリスティック。
     const refColor = this._tongueRef;
-    const tol2 = this._tongueTol * this._tongueTol;
-    for (let y = 0; y < SH; y++) {
-      for (let x = 0; x < SW; x++) {
-        const i = (y * SW + x) * 4;
-        if (md[i + 3] < 128) continue;
-        maskCount++;
-        const r = img[i];
-        const g = img[i + 1];
-        const b = img[i + 2];
-        let hit;
-        if (refColor) {
-          const dr = r - refColor.r;
-          const dg = g - refColor.g;
-          const db = b - refColor.b;
-          hit = dr * dr + dg * dg + db * db < tol2;
-        } else {
-          const sum = r + g + b;
-          // ピンク/赤：赤が優勢・明るすぎ(歯)/暗すぎ(空洞)を除外
-          hit = r > 80 && r - g > 16 && r - b > 8 && sum > 150 && sum < 720;
-        }
-        if (hit) {
-          count++;
-          sxa += x;
-          sya += y;
-          // 口中心から最も遠い点（＝初回の舌先候補）
-          const dfx = x - cx0;
-          const dfy = y - cy0;
-          const df = dfx * dfx + dfy * dfy;
-          if (df > bestFar) {
-            bestFar = df;
-            farx = x;
-            fary = y;
-          }
-          // 直前のピンク点に最も近い点（＝フレーム間の追従）
-          const dnx = x - prevx;
-          const dny = y - prevy;
-          const dn = dnx * dnx + dny * dny;
-          if (dn < bestNear) {
-            bestNear = dn;
-            nearx = x;
-            neary = y;
-          }
-        }
-      }
-    }
-    // 色校正済みなら判定を緩め（既に色一致で絞れているため）、未校正は厳しめ。
-    const minCount = refColor ? Math.max(8, maskCount * 0.03) : Math.max(18, maskCount * 0.06);
-    if (maskCount < 30 || count < minCount) {
-      // 見失い：present=false にするが、点は直前位置に残す（タップ位置から消えない）
+    // 未校正（タップ前）は何もしない。点は出さない。
+    if (!refColor) {
       this.tongueSig = { present: false, cover: 0, cx: 0, cy: 0 };
       return;
     }
-    const cxp = sxa / count;
-    const cyp = sya / count;
-    const refLen = (INTERNAL_W / this.settings.zoom) * sx || 1;
-    this.tongueSig = {
-      present: true,
-      cover: count / maskCount,
-      cx: (cxp - cx0) / refLen,
-      cy: (cyp - cy0) / refLen,
-    };
-    // 追従点：前フレームがあれば「近傍の一致画素」、無ければ「最遠点」。
-    // 直前位置へ平滑化して寄せる（点が飛ばず、舌の動きに滑らかに追従）。
-    const tx = prev ? nearx : farx;
-    const ty = prev ? neary : fary;
+
+    // 解析対象：現在のクリーンな口元（メインキャンバス）を縮小
+    this._anaCtx.drawImage(this.canvas, 0, 0, INTERNAL_W, INTERNAL_H, 0, 0, SW, SH);
+    const img = this._anaCtx.getImageData(0, 0, SW, SH).data;
+
+    // 探索窓：口中心まわりの広めの固定矩形（鼻・画面端・遠い肌を除外しつつ、
+    // 挺舌・左右・上下の可動域はカバー）。ランドマークに追従しないので安定。
+    const bx0 = SW * 0.1;
+    const bx1 = SW * 0.9;
+    const by0 = SH * 0.2;
+    const by1 = SH * 0.98;
+    const cx0 = SW / 2;
+    const cy0 = SH / 2;
+    const tol2 = this._tongueTol * this._tongueTol;
+
+    // 追従の起点：直前のピンク点（タップ位置 or 前フレーム）
+    const prev = this._tonguePink;
+    const prevx = prev ? prev.x * sx : cx0;
+    const prevy = prev ? prev.y * sy : cy0;
+    const searchR = SW * 0.5; // 近傍とみなす半径
+    const searchR2 = searchR * searchR;
+
+    let winCount = 0; // 探索窓内の画素数（cover の分母）
+    let count = 0; // 一致色の総数
+    let sxa = 0;
+    let sya = 0; // 一致色の重心（cx/cy 信号用）
+    let nearCount = 0;
+    let nsx = 0;
+    let nsy = 0; // 直前点の近傍にある一致色の重心（追従用）
+
+    for (let y = (by0 | 0); y < by1; y++) {
+      for (let x = (bx0 | 0); x < bx1; x++) {
+        winCount++;
+        const i = (y * SW + x) * 4;
+        const dr = img[i] - refColor.r;
+        const dg = img[i + 1] - refColor.g;
+        const db = img[i + 2] - refColor.b;
+        if (dr * dr + dg * dg + db * db >= tol2) continue;
+        count++;
+        sxa += x;
+        sya += y;
+        const dnx = x - prevx;
+        const dny = y - prevy;
+        if (dnx * dnx + dny * dny <= searchR2) {
+          nearCount++;
+          nsx += x;
+          nsy += y;
+        }
+      }
+    }
+
+    const minCount = Math.max(6, winCount * 0.02);
+    if (count < minCount) {
+      // 見失い：present=false。点は直前位置に残す（タップ位置から消えない）。
+      this.tongueSig = { present: false, cover: 0, cx: 0, cy: 0 };
+      return;
+    }
+
+    // 追従先：近傍に十分あればその重心（同じ塊を追う）、無ければ全体重心で再取得。
+    let tx;
+    let ty;
+    if (nearCount >= Math.max(4, minCount * 0.4)) {
+      tx = nsx / nearCount;
+      ty = nsy / nearCount;
+    } else {
+      tx = sxa / count;
+      ty = sya / count;
+    }
     const nx = tx / sx;
     const ny = ty / sy;
+    // 平滑化（0.5）で滑らかに追従
     this._tonguePink = prev
       ? { x: prev.x + (nx - prev.x) * 0.5, y: prev.y + (ny - prev.y) * 0.5 }
       : { x: nx, y: ny };
-  }
 
-  _maskPoly(mc, pts, sx, sy) {
-    if (!pts || pts.length < 3) return;
-    mc.beginPath();
-    for (let i = 0; i < pts.length; i++) {
-      const p = this._project(pts[i].x, pts[i].y);
-      if (i === 0) mc.moveTo(p[0] * sx, p[1] * sy);
-      else mc.lineTo(p[0] * sx, p[1] * sy);
-    }
-    mc.closePath();
-    mc.fill();
+    // 種目カウント用の信号（口中心からの相対位置）
+    const refLen = (INTERNAL_W / this.settings.zoom) * sx || 1;
+    this.tongueSig = {
+      present: true,
+      cover: count / winCount,
+      cx: (sxa / count - cx0) / refLen,
+      cy: (sya / count - cy0) / refLen,
+    };
   }
 
   // 種目ごとの反復カウント（左右反復／上下反復／挺舌）
@@ -624,11 +583,12 @@ export class MouthEngine {
     const s = this.tongueSig;
     if (!ex) return;
     if (ex === "protrude") {
-      if (s.present && s.cover > 0.22 && this._protArm) {
+      // cover は探索窓に占める舌色の割合。挺舌で舌色面積が増えるのを利用。
+      if (s.present && s.cover > 0.05 && this._protArm) {
         this._protArm = false;
         this.tongueReps++;
         this.onRep && this.onRep(this.tongueReps);
-      } else if (!s.present || s.cover < 0.1) {
+      } else if (!s.present || s.cover < 0.02) {
         this._protArm = true;
       }
     } else if (ex === "lr") {
