@@ -175,6 +175,8 @@ export function detectMouth(landmarker, video, tMs) {
     inner: loop(lm, LIP_INNER),
     cornerL: { x: cl.x, y: cl.y },
     cornerR: { x: cr.x, y: cr.y },
+    // 口の開口部の中央（内側上下唇の中点）。舌が出ているかの色判定に使う。
+    mouthInner: { x: (ti.x + bi.x) / 2, y: (ti.y + bi.y) / 2 },
     targets,
   };
 

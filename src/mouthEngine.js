@@ -12,7 +12,7 @@
 // ロックするが、唇の開閉そのものはロックしない。だから口の動きは見えるのに
 // 全体像はブレない。重ねた目標も同じ座標系なので自動的に顔へ追従する。
 
-import { createFaceLandmarker, detectMouth } from "./faceLandmarker.js?v=28";
+import { createFaceLandmarker, detectMouth } from "./faceLandmarker.js?v=29";
 
 const INTERNAL_W = 720;
 const INTERNAL_H = 960; // 3:4 縦
@@ -204,6 +204,7 @@ export class MouthEngine {
     if (!v) {
       this._touch = null;
       this.tongueOut = 0;
+      this._tongueVis = 0;
       this.tongueSig = {
         present: false,
         out: 0,
@@ -434,53 +435,77 @@ export class MouthEngine {
     }
   };
 
+  // 指定位置の小パッチの平均色 {r,g,b}。範囲外・取得失敗は null。
+  _meanPatch(px, py, R) {
+    const x0 = Math.round(px) - R;
+    const y0 = Math.round(py) - R;
+    if (x0 < 0 || y0 < 0 || x0 + 2 * R >= INTERNAL_W || y0 + 2 * R >= INTERNAL_H) return null;
+    let data;
+    try {
+      data = this.ctx.getImageData(x0, y0, 2 * R, 2 * R).data;
+    } catch {
+      return null;
+    }
+    let r = 0;
+    let g = 0;
+    let b = 0;
+    let n = 0;
+    for (let i = 0; i < data.length; i += 4) {
+      r += data[i];
+      g += data[i + 1];
+      b += data[i + 2];
+      n++;
+    }
+    return n ? { r: r / n, g: g / n, b: b / n } : null;
+  }
+
+  // 「舌が出ているか」の判定（0..1）。
+  // AIの tongueOut は端末によって常に0を返すことがあるため、色ベースの判定を主に使う：
+  // 口が開いていて、開口部の中央が「明るい赤系」なら舌が見えている。
+  // （口を開けただけ＝奥は暗い空洞、歯＝白っぽい、のどちらでもない色）
+  _updateTongueVisible() {
+    const L = this.lips;
+    let visible = false;
+    if (L && L.mouthInner && this.openness > 0.08) {
+      const [px, py] = this._project(L.mouthInner.x, L.mouthInner.y);
+      const m = this._meanPatch(px, py, 10);
+      if (m) {
+        const sum = m.r + m.g + m.b;
+        visible = m.r - Math.max(m.g, m.b) > 6 && sum > 150 && sum < 720;
+      }
+    }
+    let tv = this._tongueVis || 0;
+    tv += ((visible ? 1 : 0) - tv) * 0.4;
+    this._tongueVis = tv;
+    // AI判定（効く端末なら）と色判定の強い方を「舌が出ているスコア」とする
+    return Math.max(this.tongueOut, tv);
+  }
+
   // 目標点タッチ検知：各目標点（口角の少し外・上唇の上・下唇の下）の小さなパッチの
   // 色を監視し、「基準色（触れていない時の色）から大きく変わり、かつ舌らしい色になった」
   // 瞬間を「舌先が届いた」と判定する。
-  // 誤反応対策の要：AIの tongueOut（舌が出ている判定）をゲートにし、
-  // 舌が出ている間だけタッチを有効化する。口唇の動きだけで唇が点の下に
-  // 滑り込んでも、舌が出ていなければ反応しない。
+  // 誤反応対策の要：「舌が出ている」判定（AI＋色）をゲートにし、舌が出ている間だけ
+  // タッチを有効化する。口唇の動きだけで唇が点の下に滑り込んでも反応しない。
   _updateTongueTouch() {
     const T = this.lips && this.lips.targets;
     if (!T) return;
     if (!this._touch) {
       this._touch = { left: {}, right: {}, up: {}, down: {} };
     }
-    const gate = this.tongueOut > 0.1; // 「舌が出ている」ゲート
-    const ctx = this.ctx;
+    const outScore = this._updateTongueVisible();
+    const gate = outScore > 0.5; // 「舌が出ている」ゲート
     const R = 9; // 検知パッチの半径（出力px）
     let anyOn = false;
     for (const key of ["left", "right", "up", "down"]) {
       const st = this._touch[key];
       const [px, py] = this._project(T[key].x, T[key].y);
-      const x0 = Math.round(px) - R;
-      const y0 = Math.round(py) - R;
-      if (x0 < 0 || y0 < 0 || x0 + 2 * R >= INTERNAL_W || y0 + 2 * R >= INTERNAL_H) {
+      const m = this._meanPatch(px, py, R);
+      if (!m) {
         st.on = false;
         st.hold = 0;
         continue;
       }
-      let data;
-      try {
-        data = ctx.getImageData(x0, y0, 2 * R, 2 * R).data;
-      } catch {
-        st.on = false;
-        st.hold = 0;
-        continue;
-      }
-      let r = 0;
-      let g = 0;
-      let b = 0;
-      let n = 0;
-      for (let i = 0; i < data.length; i += 4) {
-        r += data[i];
-        g += data[i + 1];
-        b += data[i + 2];
-        n++;
-      }
-      r /= n;
-      g /= n;
-      b /= n;
+      const { r, g, b } = m;
       if (!st.base) {
         st.base = { r, g, b };
         st.on = false;
@@ -505,7 +530,7 @@ export class MouthEngine {
       // 舌らしさ：赤が優勢で、暗すぎ（口腔内の影）・明るすぎ（歯・照明）でない
       const tongueish = r - Math.max(g, b) > 4 && sum > 140 && sum < 720;
       // ヒステリシス：ONは大きな変化を要求、OFFは小さくなるまで維持（チャタリング防止）
-      const raw = st.on ? dist > 22 && tongueish : dist > 40 && tongueish;
+      const raw = st.on ? dist > 20 && tongueish : dist > 34 && tongueish;
       // 持続条件：2回連続（約0.13秒）で確定。一瞬のノイズでは反応しない。
       st.hold = raw ? (st.hold || 0) + 1 : 0;
       st.on = st.on ? raw : st.hold >= 2;
@@ -513,7 +538,7 @@ export class MouthEngine {
     }
     this.tongueSig = {
       present: anyOn || gate,
-      out: this.tongueOut,
+      out: outScore,
       touch: {
         left: !!this._touch.left.on,
         right: !!this._touch.right.on,
@@ -542,12 +567,13 @@ export class MouthEngine {
     if (!ex) return;
     const t = this.tongueSig.touch || {};
     if (ex === "protrude") {
-      // tongueOut（AIの舌突出スコア）で「出す→戻す」を1回と数える
-      if (this.tongueOut > 0.5 && this._protArm) {
+      // 「舌が出ている」スコア（AI＋色判定）で「出す→戻す」を1回と数える
+      const out = this.tongueSig.out || 0;
+      if (out > 0.6 && this._protArm) {
         this._protArm = false;
         this.tongueReps++;
         this.onRep && this.onRep(this.tongueReps);
-      } else if (this.tongueOut < 0.25) {
+      } else if (out < 0.25) {
         this._protArm = true;
       }
     } else if (ex === "lr") {

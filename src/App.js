@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { html } from "./html.js?v=28";
-import { MouthEngine } from "./mouthEngine.js?v=28";
-import * as store from "./store.js?v=28";
+import { html } from "./html.js?v=29";
+import { MouthEngine } from "./mouthEngine.js?v=29";
+import * as store from "./store.js?v=29";
 
 const OPEN_SCALE = 0.6; // 縦（あ）メーターの表示上限
 const SPREAD_SCALE = 0.8; // 横（い）メーターの表示上限
 const reachedStyle = { color: "#06231c", background: "#36c6a0", borderColor: "#36c6a0" };
-const APP_VERSION = "v28";
+const APP_VERSION = "v29";
 
 const TONGUE_EXERCISES = [
   { id: "protrude", label: "挺舌（前に出す）" },
@@ -660,8 +660,8 @@ function TongueCard(props) {
       <div className="card">
         <h3>動作チェック（今の検出状態）</h3>
         <div className="row between small">
-          <span>舌が出ている（AI判定）</span>
-          <span className="badge" style=${(tg.out || 0) > 0.1 ? reachedStyle : {}}>${outPct}%</span>
+          <span>舌が出ている（AI＋色判定）</span>
+          <span className="badge" style=${(tg.out || 0) > 0.5 ? reachedStyle : {}}>${outPct}%</span>
         </div>
         <div className="row between small" style=${{ marginTop: 8 }}>
           <span>点へのタッチ</span>
