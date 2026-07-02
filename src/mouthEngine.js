@@ -12,7 +12,7 @@
 // ロックするが、唇の開閉そのものはロックしない。だから口の動きは見えるのに
 // 全体像はブレない。重ねた目標も同じ座標系なので自動的に顔へ追従する。
 
-import { createFaceLandmarker, detectMouth } from "./faceLandmarker.js?v=27";
+import { createFaceLandmarker, detectMouth } from "./faceLandmarker.js?v=28";
 
 const INTERNAL_W = 720;
 const INTERNAL_H = 960; // 3:4 縦
@@ -436,14 +436,17 @@ export class MouthEngine {
 
   // 目標点タッチ検知：各目標点（口角の少し外・上唇の上・下唇の下）の小さなパッチの
   // 色を監視し、「基準色（触れていない時の色）から大きく変わり、かつ舌らしい色になった」
-  // 瞬間を「舌先が届いた」と判定する。舌全体の追跡はしないので、照明・口紅・
-  // 口の開閉に頑健。基準色は触れていない間ゆっくり自動更新（照明変化に追従）。
+  // 瞬間を「舌先が届いた」と判定する。
+  // 誤反応対策の要：AIの tongueOut（舌が出ている判定）をゲートにし、
+  // 舌が出ている間だけタッチを有効化する。口唇の動きだけで唇が点の下に
+  // 滑り込んでも、舌が出ていなければ反応しない。
   _updateTongueTouch() {
     const T = this.lips && this.lips.targets;
     if (!T) return;
     if (!this._touch) {
       this._touch = { left: {}, right: {}, up: {}, down: {} };
     }
+    const gate = this.tongueOut > 0.1; // 「舌が出ている」ゲート
     const ctx = this.ctx;
     const R = 9; // 検知パッチの半径（出力px）
     let anyOn = false;
@@ -454,6 +457,7 @@ export class MouthEngine {
       const y0 = Math.round(py) - R;
       if (x0 < 0 || y0 < 0 || x0 + 2 * R >= INTERNAL_W || y0 + 2 * R >= INTERNAL_H) {
         st.on = false;
+        st.hold = 0;
         continue;
       }
       let data;
@@ -461,6 +465,7 @@ export class MouthEngine {
         data = ctx.getImageData(x0, y0, 2 * R, 2 * R).data;
       } catch {
         st.on = false;
+        st.hold = 0;
         continue;
       }
       let r = 0;
@@ -479,6 +484,17 @@ export class MouthEngine {
       if (!st.base) {
         st.base = { r, g, b };
         st.on = false;
+        st.hold = 0;
+        continue;
+      }
+      if (!gate) {
+        // 舌が出ていない間：今そこに見えているもの（肌・唇）を「背景」として
+        // 基準色をゆっくり更新。口すぼめ等で唇が点の下に来ても背景として学習される。
+        st.base.r += (r - st.base.r) * 0.06;
+        st.base.g += (g - st.base.g) * 0.06;
+        st.base.b += (b - st.base.b) * 0.06;
+        st.on = false;
+        st.hold = 0;
         continue;
       }
       const dr = r - st.base.r;
@@ -489,18 +505,14 @@ export class MouthEngine {
       // 舌らしさ：赤が優勢で、暗すぎ（口腔内の影）・明るすぎ（歯・照明）でない
       const tongueish = r - Math.max(g, b) > 4 && sum > 140 && sum < 720;
       // ヒステリシス：ONは大きな変化を要求、OFFは小さくなるまで維持（チャタリング防止）
-      const on = st.on ? dist > 22 && tongueish : dist > 40 && tongueish;
-      if (!on) {
-        // 触れていない間だけ基準色をゆっくり更新（照明・顔向きの変化に追従）
-        st.base.r += (r - st.base.r) * 0.06;
-        st.base.g += (g - st.base.g) * 0.06;
-        st.base.b += (b - st.base.b) * 0.06;
-      }
-      st.on = on;
-      anyOn = anyOn || on;
+      const raw = st.on ? dist > 22 && tongueish : dist > 40 && tongueish;
+      // 持続条件：2回連続（約0.13秒）で確定。一瞬のノイズでは反応しない。
+      st.hold = raw ? (st.hold || 0) + 1 : 0;
+      st.on = st.on ? raw : st.hold >= 2;
+      anyOn = anyOn || st.on;
     }
     this.tongueSig = {
-      present: anyOn || this.tongueOut > 0.3,
+      present: anyOn || gate,
       out: this.tongueOut,
       touch: {
         left: !!this._touch.left.on,

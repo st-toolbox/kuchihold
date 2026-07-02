@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { html } from "./html.js?v=27";
-import { MouthEngine } from "./mouthEngine.js?v=27";
-import * as store from "./store.js?v=27";
+import { html } from "./html.js?v=28";
+import { MouthEngine } from "./mouthEngine.js?v=28";
+import * as store from "./store.js?v=28";
 
 const OPEN_SCALE = 0.6; // 縦（あ）メーターの表示上限
 const SPREAD_SCALE = 0.8; // 横（い）メーターの表示上限
 const reachedStyle = { color: "#06231c", background: "#36c6a0", borderColor: "#36c6a0" };
-const APP_VERSION = "v27";
+const APP_VERSION = "v28";
 
 const TONGUE_EXERCISES = [
   { id: "protrude", label: "挺舌（前に出す）" },
@@ -660,8 +660,8 @@ function TongueCard(props) {
       <div className="card">
         <h3>動作チェック（今の検出状態）</h3>
         <div className="row between small">
-          <span>挺舌（舌の突出・AI判定）</span>
-          <span className="badge" style=${(tg.out || 0) > 0.5 ? reachedStyle : {}}>${outPct}%</span>
+          <span>舌が出ている（AI判定）</span>
+          <span className="badge" style=${(tg.out || 0) > 0.1 ? reachedStyle : {}}>${outPct}%</span>
         </div>
         <div className="row between small" style=${{ marginTop: 8 }}>
           <span>点へのタッチ</span>
@@ -670,7 +670,8 @@ function TongueCard(props) {
           </span>
         </div>
         <p className="hint" style=${{ marginTop: 8 }}>
-          舌を出して点に触れてみて、ここが反応するか確認できます。反応が悪ければ照明を明るくしてください。
+          誤カウント防止のため、タッチは<b>AIが「舌が出ている」と判定している間だけ</b>有効です
+          （口唇だけ動かしても反応しません）。舌を出して％が上がるか、点に触れて反応するか確認してください。
         </p>
       </div>
     </div>
