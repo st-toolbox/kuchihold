@@ -12,7 +12,7 @@
 // ロックするが、唇の開閉そのものはロックしない。だから口の動きは見えるのに
 // 全体像はブレない。重ねた目標も同じ座標系なので自動的に顔へ追従する。
 
-import { createFaceLandmarker, detectMouth } from "./faceLandmarker.js?v=26";
+import { createFaceLandmarker, detectMouth } from "./faceLandmarker.js?v=27";
 
 const INTERNAL_W = 720;
 const INTERNAL_H = 960; // 3:4 縦
@@ -104,23 +104,22 @@ export class MouthEngine {
 
     // 舌の到達目標点（描画用）
     this._showTonguePoints = false;
-    this._tongueTarget = null; // 'left'|'right'|'up'|'down'|null
 
-    // 舌先の色検出（学習不要）＋種目カウント
+    // 舌リハ：目標点タッチ検知（各点の「基準色からの変化」）＋挺舌（AI判定）＋種目カウント
     this._tongueDetect = false;
     this._tongueExercise = null; // 'protrude'|'lr'|'ud'
     this.tongueReps = 0;
-    this.tongueSig = { present: false, cover: 0, cx: 0, cy: 0 };
-    this._tonguePink = null; // 舌先の位置（INTERNAL座標）
+    this.tongueOut = 0; // 挺舌ブレンドシェイプ tongueOut（0..1、平滑化済み）
+    this._touch = null; // {left,right,up,down: {base:{r,g,b}, on:bool}}
+    this.tongueSig = {
+      present: false,
+      out: 0,
+      touch: { left: false, right: false, up: false, down: false },
+    };
     this._lrSide = 0;
     this._udSide = 0;
     this._protArm = true;
     this._tongueFrame = 0;
-    this._anaCanvas = null;
-    this._maskCanvas = null;
-    // 舌先の色は「タップして同定」で本人・照明ごとに校正する。
-    this._tongueRef = null; // {r,g,b} タップでサンプルした舌先の色
-    this._tongueTol = 62; // 色距離の許容（大きいほど緩い）
 
     // コールバック
     this.onMetrics = null; // ({openness, spread, reachedOpen, reachedSpread, reached, reps, shadowMatch, hasFace})
@@ -200,55 +199,17 @@ export class MouthEngine {
   setShowTonguePoints(v) {
     this._showTonguePoints = !!v;
   }
-  setTongueTargetPoint(id) {
-    this._tongueTarget = id;
-  }
   setTongueDetect(v) {
     this._tongueDetect = !!v;
     if (!v) {
-      this._tonguePink = null;
-      this.tongueSig = { present: false, cover: 0, cx: 0, cy: 0 };
-      this._tongueRef = null; // 舌リハを抜けたら色校正も破棄
+      this._touch = null;
+      this.tongueOut = 0;
+      this.tongueSig = {
+        present: false,
+        out: 0,
+        touch: { left: false, right: false, up: false, down: false },
+      };
     }
-  }
-  clearTongueRef() {
-    this._tongueRef = null;
-    this._tonguePink = null;
-    this.tongueSig = { present: false, cover: 0, cx: 0, cy: 0 };
-  }
-  // 画面の舌先タップ → その位置の色を採取して「舌先の色」として登録する。
-  // p は INTERNAL 座標（メインキャンバス基準）。
-  _sampleTongueAt(p) {
-    this.tapMarks.push({ x: p.x, y: p.y, t: performance.now() });
-    // 点・輪郭やピンク点の色を拾わないよう、クリーンな映像クロップから採取する。
-    const clean = this.snapshotCrop();
-    const ctx = clean ? clean.getContext("2d") : this.ctx;
-    const R = 6; // タップ周辺 (2R+1)^2 を平均してノイズを抑える
-    const x0 = clamp(Math.round(p.x) - R, 0, INTERNAL_W - 1);
-    const y0 = clamp(Math.round(p.y) - R, 0, INTERNAL_H - 1);
-    const w = Math.min(2 * R + 1, INTERNAL_W - x0);
-    const h = Math.min(2 * R + 1, INTERNAL_H - y0);
-    let data;
-    try {
-      data = ctx.getImageData(x0, y0, w, h).data;
-    } catch {
-      return;
-    }
-    let r = 0;
-    let g = 0;
-    let b = 0;
-    let n = 0;
-    for (let i = 0; i < data.length; i += 4) {
-      r += data[i];
-      g += data[i + 1];
-      b += data[i + 2];
-      n++;
-    }
-    if (!n) return;
-    this._tongueRef = { r: r / n, g: g / n, b: b / n };
-    // すぐにその位置へピンク点を出して反応を示す
-    this._tonguePink = { x: p.x, y: p.y };
-    this.tongueSig = { present: true, cover: 0, cx: 0, cy: 0 };
   }
   setTongueExercise(ex) {
     if (ex !== this._tongueExercise) {
@@ -411,10 +372,13 @@ export class MouthEngine {
       this.mmPerRel = this.mmPerRel
         ? this.mmPerRel + (mouth.mmPerRel - this.mmPerRel) * 0.3
         : mouth.mmPerRel;
+      // 挺舌スコア（AI判定）を平滑化
+      this.tongueOut += ((mouth.tongueOut || 0) - this.tongueOut) * 0.4;
       this._updateTransform(mouth, v, t);
       this._updateMetrics(mouth.openness, mouth.spread);
     } else {
       this.lips = null;
+      this.tongueOut *= 0.9;
     }
 
     // シャドウ一致判定：現在の口の形が撮影時の形に近いか
@@ -431,11 +395,11 @@ export class MouthEngine {
 
     if (this.sm) {
       this._drawVideoCrop(ctx); // 安定化した口元（この時点では映像のみ）
-      // 舌先の色検出（クリーンな映像に対して。2フレームに1回）
+      // 目標点タッチ検知（クリーンな映像に対して。2フレームに1回）
       if (this._tongueDetect && this.lips && this.lips.targets) {
         this._tongueFrame++;
         if (this._tongueFrame % 2 === 0) {
-          this._detectTongueTip();
+          this._updateTongueTouch();
           this._countTongue();
         }
       }
@@ -446,7 +410,6 @@ export class MouthEngine {
       }
       if (this.settings.showLandmarks) this._drawLandmarks(ctx); // 口角点・唇輪郭
       this._drawOverlays(ctx); // 手書き＆スタンプの目標
-      if (this._tongueDetect && this._tonguePink) this._drawPink(ctx); // 舌先ピンク点
       if (this.shadowMatch) this._drawMatchFeedback(ctx); // ぴったり！
     } else {
       this._drawRawCover(ctx); // まだ顔ロック前：素の映像を表示
@@ -466,178 +429,137 @@ export class MouthEngine {
         shadowMatch: this.shadowMatch,
         tongue: this.tongueSig,
         tongueReps: this.tongueReps,
-        tongueRef: !!this._tongueRef,
         hasFace,
       });
     }
   };
 
-  // 舌先の色追跡：口を中心とした広めの固定探索窓の中で、校正色（タップで採取）に
-  // 一致する画素を探し、直前の点の近くにある塊を舌先として追う。
-  // 唇ランドマークのマスクに頼らないので、口を閉じても点が飛ばず、開け直すと再取得する。
-  _detectTongueTip() {
-    const SW = 120;
-    const SH = 160;
-    if (!this._anaCanvas) {
-      this._anaCanvas = document.createElement("canvas");
-      this._anaCanvas.width = SW;
-      this._anaCanvas.height = SH;
-      this._anaCtx = this._anaCanvas.getContext("2d", { willReadFrequently: true });
+  // 目標点タッチ検知：各目標点（口角の少し外・上唇の上・下唇の下）の小さなパッチの
+  // 色を監視し、「基準色（触れていない時の色）から大きく変わり、かつ舌らしい色になった」
+  // 瞬間を「舌先が届いた」と判定する。舌全体の追跡はしないので、照明・口紅・
+  // 口の開閉に頑健。基準色は触れていない間ゆっくり自動更新（照明変化に追従）。
+  _updateTongueTouch() {
+    const T = this.lips && this.lips.targets;
+    if (!T) return;
+    if (!this._touch) {
+      this._touch = { left: {}, right: {}, up: {}, down: {} };
     }
-    const sx = SW / INTERNAL_W;
-    const sy = SH / INTERNAL_H;
-    const refColor = this._tongueRef;
-    // 未校正（タップ前）は何もしない。点は出さない。
-    if (!refColor) {
-      this.tongueSig = { present: false, cover: 0, cx: 0, cy: 0 };
-      return;
-    }
-
-    // 解析対象：現在のクリーンな口元（メインキャンバス）を縮小
-    this._anaCtx.drawImage(this.canvas, 0, 0, INTERNAL_W, INTERNAL_H, 0, 0, SW, SH);
-    const img = this._anaCtx.getImageData(0, 0, SW, SH).data;
-
-    // 探索窓：口中心まわりの広めの固定矩形（鼻・画面端・遠い肌を除外しつつ、
-    // 挺舌・左右・上下の可動域はカバー）。ランドマークに追従しないので安定。
-    const bx0 = SW * 0.1;
-    const bx1 = SW * 0.9;
-    const by0 = SH * 0.2;
-    const by1 = SH * 0.98;
-    const cx0 = SW / 2;
-    const cy0 = SH / 2;
-    const tol2 = this._tongueTol * this._tongueTol;
-
-    // 追従の起点：直前のピンク点（タップ位置 or 前フレーム）。無ければ何もしない。
-    const prev = this._tonguePink;
-    if (!prev) {
-      this.tongueSig = { present: false, cover: 0, cx: 0, cy: 0 };
-      return;
-    }
-    const prevx = prev.x * sx;
-    const prevy = prev.y * sy;
-    // 近傍だけを追う（局所追跡）。半径を小さくして、唇など別の色の塊へ
-    // 飛び移らないようにする。見失っても遠くへワープさせない（再タップで取り直す）。
-    const searchR = SW * 0.16;
-    const searchR2 = searchR * searchR;
-
-    let winCount = 0; // 探索窓内の画素数（cover の分母）
-    let count = 0; // 一致色の総数（cover 用）
-    let nearCount = 0;
-    let nsx = 0;
-    let nsy = 0; // 直前点の近傍にある一致色の重心（追従用）
-
-    for (let y = (by0 | 0); y < by1; y++) {
-      for (let x = (bx0 | 0); x < bx1; x++) {
-        winCount++;
-        const i = (y * SW + x) * 4;
-        const dr = img[i] - refColor.r;
-        const dg = img[i + 1] - refColor.g;
-        const db = img[i + 2] - refColor.b;
-        if (dr * dr + dg * dg + db * db >= tol2) continue;
-        count++;
-        const dnx = x - prevx;
-        const dny = y - prevy;
-        if (dnx * dnx + dny * dny <= searchR2) {
-          nearCount++;
-          nsx += x;
-          nsy += y;
-        }
+    const ctx = this.ctx;
+    const R = 9; // 検知パッチの半径（出力px）
+    let anyOn = false;
+    for (const key of ["left", "right", "up", "down"]) {
+      const st = this._touch[key];
+      const [px, py] = this._project(T[key].x, T[key].y);
+      const x0 = Math.round(px) - R;
+      const y0 = Math.round(py) - R;
+      if (x0 < 0 || y0 < 0 || x0 + 2 * R >= INTERNAL_W || y0 + 2 * R >= INTERNAL_H) {
+        st.on = false;
+        continue;
       }
+      let data;
+      try {
+        data = ctx.getImageData(x0, y0, 2 * R, 2 * R).data;
+      } catch {
+        st.on = false;
+        continue;
+      }
+      let r = 0;
+      let g = 0;
+      let b = 0;
+      let n = 0;
+      for (let i = 0; i < data.length; i += 4) {
+        r += data[i];
+        g += data[i + 1];
+        b += data[i + 2];
+        n++;
+      }
+      r /= n;
+      g /= n;
+      b /= n;
+      if (!st.base) {
+        st.base = { r, g, b };
+        st.on = false;
+        continue;
+      }
+      const dr = r - st.base.r;
+      const dg = g - st.base.g;
+      const db = b - st.base.b;
+      const dist = Math.sqrt(dr * dr + dg * dg + db * db);
+      const sum = r + g + b;
+      // 舌らしさ：赤が優勢で、暗すぎ（口腔内の影）・明るすぎ（歯・照明）でない
+      const tongueish = r - Math.max(g, b) > 4 && sum > 140 && sum < 720;
+      // ヒステリシス：ONは大きな変化を要求、OFFは小さくなるまで維持（チャタリング防止）
+      const on = st.on ? dist > 22 && tongueish : dist > 40 && tongueish;
+      if (!on) {
+        // 触れていない間だけ基準色をゆっくり更新（照明・顔向きの変化に追従）
+        st.base.r += (r - st.base.r) * 0.06;
+        st.base.g += (g - st.base.g) * 0.06;
+        st.base.b += (b - st.base.b) * 0.06;
+      }
+      st.on = on;
+      anyOn = anyOn || on;
     }
-
-    if (nearCount < 4) {
-      // 近傍に舌色が無い＝見失い。点は動かさずその場に残す（勝手に飛ばない）。
-      this.tongueSig = { present: false, cover: 0, cx: prev._cx || 0, cy: prev._cy || 0 };
-      return;
-    }
-
-    // 追従先：近傍一致色の重心へ平滑化して寄せる（同じ塊だけを局所的に追う）
-    const nx = nsx / nearCount / sx;
-    const ny = nsy / nearCount / sy;
-    const px = prev.x + (nx - prev.x) * 0.5;
-    const py = prev.y + (ny - prev.y) * 0.5;
-    this._tonguePink = { x: px, y: py };
-
-    // 種目カウント用の信号：追従中のピンク点の口中心からの相対位置。
-    // cx/cy を点に残しておき、見失い時も直前値を保てるようにする。
-    const refLen = (INTERNAL_W / this.settings.zoom) * sx || 1;
-    const cx = (px * sx - cx0) / refLen;
-    const cy = (py * sy - cy0) / refLen;
-    this._tonguePink._cx = cx;
-    this._tonguePink._cy = cy;
     this.tongueSig = {
-      present: true,
-      cover: count / winCount,
-      cx,
-      cy,
+      present: anyOn || this.tongueOut > 0.3,
+      out: this.tongueOut,
+      touch: {
+        left: !!this._touch.left.on,
+        right: !!this._touch.right.on,
+        up: !!this._touch.up.on,
+        down: !!this._touch.down.on,
+      },
     };
   }
 
-  // 種目ごとの反復カウント（左右反復／上下反復／挺舌）
+  // 次にタッチすべき目標点（脈動リングで示す）
+  _nextTargets() {
+    const s = new Set();
+    if (this._tongueExercise === "lr") {
+      if (this._lrSide !== -1) s.add("left");
+      if (this._lrSide !== 1) s.add("right");
+    } else if (this._tongueExercise === "ud") {
+      if (this._udSide !== -1) s.add("up");
+      if (this._udSide !== 1) s.add("down");
+    }
+    return s;
+  }
+
+  // 種目ごとの反復カウント（挺舌＝AI判定／左右・上下＝目標点タッチの交互）
   _countTongue() {
     const ex = this._tongueExercise;
-    const s = this.tongueSig;
     if (!ex) return;
+    const t = this.tongueSig.touch || {};
     if (ex === "protrude") {
-      // cover は探索窓に占める舌色の割合。挺舌で舌色面積が増えるのを利用。
-      if (s.present && s.cover > 0.05 && this._protArm) {
+      // tongueOut（AIの舌突出スコア）で「出す→戻す」を1回と数える
+      if (this.tongueOut > 0.5 && this._protArm) {
         this._protArm = false;
         this.tongueReps++;
         this.onRep && this.onRep(this.tongueReps);
-      } else if (!s.present || s.cover < 0.02) {
+      } else if (this.tongueOut < 0.25) {
         this._protArm = true;
       }
     } else if (ex === "lr") {
-      const T = 0.25;
-      if (s.present) {
-        if (s.cx < -T && this._lrSide !== -1) {
-          this._lrSide = -1;
-          this.tongueReps++;
-          this.onRep && this.onRep(this.tongueReps);
-        } else if (s.cx > T && this._lrSide !== 1) {
-          this._lrSide = 1;
-          this.tongueReps++;
-          this.onRep && this.onRep(this.tongueReps);
-        }
+      // 左右の点へ交互に届いたときだけカウント
+      if (t.left && this._lrSide !== -1) {
+        this._lrSide = -1;
+        this.tongueReps++;
+        this.onRep && this.onRep(this.tongueReps);
+      } else if (t.right && this._lrSide !== 1) {
+        this._lrSide = 1;
+        this.tongueReps++;
+        this.onRep && this.onRep(this.tongueReps);
       }
     } else if (ex === "ud") {
-      const T = 0.22;
-      if (s.present) {
-        if (s.cy < -T && this._udSide !== -1) {
-          this._udSide = -1;
-          this.tongueReps++;
-          this.onRep && this.onRep(this.tongueReps);
-        } else if (s.cy > T && this._udSide !== 1) {
-          this._udSide = 1;
-          this.tongueReps++;
-          this.onRep && this.onRep(this.tongueReps);
-        }
+      if (t.up && this._udSide !== -1) {
+        this._udSide = -1;
+        this.tongueReps++;
+        this.onRep && this.onRep(this.tongueReps);
+      } else if (t.down && this._udSide !== 1) {
+        this._udSide = 1;
+        this.tongueReps++;
+        this.onRep && this.onRep(this.tongueReps);
       }
     }
-  }
-
-  _drawPink(ctx) {
-    const p = this._tonguePink;
-    ctx.save();
-    if (this.tongueSig.present) {
-      // 追従中：塗りつぶしのピンク点
-      ctx.fillStyle = "#ff5bd0";
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, 11, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.lineWidth = 3;
-      ctx.strokeStyle = "#fff";
-      ctx.stroke();
-    } else {
-      // タップ済みだが未検出：破線リングで「ここを見ています」を示す
-      ctx.lineWidth = 3;
-      ctx.strokeStyle = "#ff5bd0";
-      ctx.setLineDash([6, 6]);
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, 11, 0, Math.PI * 2);
-      ctx.stroke();
-    }
-    ctx.restore();
   }
 
   _updateTransform(mouth, v, t) {
@@ -803,28 +725,44 @@ export class MouthEngine {
 
     const T = L.targets;
     if (T) {
-      // 左右の口角：舌リハ＝水色、口唇リハ＝黄
-      const lr = this._showTonguePoints ? "#4ea1ff" : "#ffe14d";
-      this._drawTargetPoint(ctx, T.left, lr, this._tongueTarget === "left");
-      this._drawTargetPoint(ctx, T.right, lr, this._tongueTarget === "right");
-      // 舌リハ時のみ：上唇中央／下唇の少し下（赤）
       if (this._showTonguePoints) {
-        this._drawTargetPoint(ctx, T.up, "#ff5b6e", this._tongueTarget === "up");
-        this._drawTargetPoint(ctx, T.down, "#ff5b6e", this._tongueTarget === "down");
+        // 舌リハ：到達目標点（左右＝水色、上下＝赤）。次の目標は脈動、タッチで緑に点灯。
+        const touch = this._touch || {};
+        const next = this._nextTargets();
+        this._drawTargetPoint(ctx, T.left, "#4ea1ff", next.has("left"), touch.left && touch.left.on);
+        this._drawTargetPoint(ctx, T.right, "#4ea1ff", next.has("right"), touch.right && touch.right.on);
+        this._drawTargetPoint(ctx, T.up, "#ff5b6e", next.has("up"), touch.up && touch.up.on);
+        this._drawTargetPoint(ctx, T.down, "#ff5b6e", next.has("down"), touch.down && touch.down.on);
+      } else {
+        // 口唇リハ：口角の黄色点
+        this._drawTargetPoint(ctx, L.cornerL, "#ffe14d", false, false);
+        this._drawTargetPoint(ctx, L.cornerR, "#ffe14d", false, false);
       }
     }
     ctx.restore();
   }
 
-  _drawTargetPoint(ctx, p, color, active) {
+  _drawTargetPoint(ctx, p, color, active, hit) {
     const [x, y] = this._project(p.x, p.y);
     ctx.save();
+    if (hit) {
+      // 舌先が届いた：緑で大きく点灯
+      ctx.fillStyle = "#36c6a0";
+      ctx.beginPath();
+      ctx.arc(x, y, 13, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = "#fff";
+      ctx.stroke();
+      ctx.restore();
+      return;
+    }
     ctx.fillStyle = color;
     ctx.beginPath();
     ctx.arc(x, y, active ? 9 : 6, 0, Math.PI * 2);
     ctx.fill();
     if (active) {
-      // 目標として強調（脈動するリング）
+      // 次の目標として強調（脈動するリング）
       const t = (performance.now() % 900) / 900;
       ctx.globalAlpha = 1 - t;
       ctx.strokeStyle = color;
@@ -896,12 +834,6 @@ export class MouthEngine {
       if (this._calib) {
         e.preventDefault();
         this._handleCalibTap(p);
-        return;
-      }
-      // 舌リハ中はタップで舌先の色を同定（校正）する
-      if (this._tongueDetect) {
-        e.preventDefault();
-        this._sampleTongueAt(p);
         return;
       }
       if (!this.editable) return;

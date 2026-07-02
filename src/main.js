@@ -1,6 +1,6 @@
 import { createRoot } from "react-dom/client";
-import { html } from "./html.js?v=26";
-import { App } from "./App.js?v=26";
+import { html } from "./html.js?v=27";
+import { App } from "./App.js?v=27";
 
 const root = createRoot(document.getElementById("root"));
 root.render(html`<${App} />`);

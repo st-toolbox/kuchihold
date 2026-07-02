@@ -60,7 +60,8 @@ async function build(fileset, delegate) {
     baseOptions: { modelAssetPath: MODEL_URL, delegate },
     runningMode: "VIDEO",
     numFaces: 1,
-    outputFaceBlendshapes: false,
+    // tongueOut（舌の突出）ブレンドシェイプを挺舌の自動判定に使う
+    outputFaceBlendshapes: true,
     outputFacialTransformationMatrixes: false,
   });
 }
@@ -138,14 +139,34 @@ export function detectMouth(landmarker, video, tMs) {
     (EYE_WIDTH_MM / eyeWidth + INNER_CANTHAL_MM / innerCanthal) / 2;
   const mmPerRel = faceSize * px2mm;
 
-  // 舌の到達目標点（左右口角＝黄、上唇中央／下唇の少し下＝赤）
+  // 挺舌（舌の突出）：AIブレンドシェイプ tongueOut のスコア（0..1）
+  let tongueOut = 0;
+  const bs = res.faceBlendshapes && res.faceBlendshapes[0];
+  if (bs && bs.categories) {
+    for (const c of bs.categories) {
+      if (c.categoryName === "tongueOut") {
+        tongueOut = c.score;
+        break;
+      }
+    }
+  }
+
+  // 舌の到達目標点。「舌先が点を越えたか」を色の変化で検知するため、
+  // 左右は口角の少し外側（肌の上）、上は上唇の山の少し上、下は下唇の少し下に置く。
+  // 肌の上に置くと「肌色→舌色」の変化が大きく、判定が安定する。
   const upTop = lm[0] || ti; // 上唇の山
   const upIn = lm[13] || ti; // 上唇内側
   const loOut = lm[17] || bi; // 下唇の底
-  const up = { x: (upTop.x + upIn.x) / 2, y: (upTop.y + upIn.y) / 2 };
-  const down = {
-    x: loOut.x + (loOut.x - centerX) * 0.6,
-    y: loOut.y + (loOut.y - centerY) * 0.6,
+  const upMid = { x: (upTop.x + upIn.x) / 2, y: (upTop.y + upIn.y) / 2 };
+  const EXT_LR = 0.28;
+  const targets = {
+    left: { x: cl.x + (cl.x - centerX) * EXT_LR, y: cl.y + (cl.y - centerY) * EXT_LR },
+    right: { x: cr.x + (cr.x - centerX) * EXT_LR, y: cr.y + (cr.y - centerY) * EXT_LR },
+    up: { x: upMid.x + (upMid.x - centerX) * 0.15, y: upMid.y + (upMid.y - centerY) * 0.15 },
+    down: {
+      x: loOut.x + (loOut.x - centerX) * 0.6,
+      y: loOut.y + (loOut.y - centerY) * 0.6,
+    },
   };
 
   // 唇の輪郭と口角（描画用、すべて正規化座標）
@@ -154,13 +175,8 @@ export function detectMouth(landmarker, video, tMs) {
     inner: loop(lm, LIP_INNER),
     cornerL: { x: cl.x, y: cl.y },
     cornerR: { x: cr.x, y: cr.y },
-    targets: {
-      left: { x: cl.x, y: cl.y },
-      right: { x: cr.x, y: cr.y },
-      up,
-      down,
-    },
+    targets,
   };
 
-  return { centerX, centerY, faceSize, angle, openness, spread, mmPerRel, lips };
+  return { centerX, centerY, faceSize, angle, openness, spread, mmPerRel, tongueOut, lips };
 }
